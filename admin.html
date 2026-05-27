@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exam Admin</title>
+
+    <style>
+        :root {
+            --primary: #1F4E78;
+            --secondary: #27AE60;
+            --error: #E74C3C;
+            --warning: #F39C12;
+            --ygg: #8E44AD;
+            --bg: #F8FAFC;
+            --surface: #FFFFFF;
+            --text: #0F172A;
+            --muted: #64748B;
+            --border: #E2E8F0;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body { font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
+
+        .topbar {
+            background: linear-gradient(135deg, var(--primary), #2E75B6);
+            color: white;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .topbar h1 { font-size: 20px; }
+        .topbar .subtitle { font-size: 13px; opacity: 0.8; margin-top: 2px; }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        /* Stat cards */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-card .value { font-size: 28px; font-weight: bold; color: var(--primary); }
+        .stat-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
+
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .toolbar select,
+        .toolbar input {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            background: var(--surface);
+        }
+
+        .toolbar label { font-size: 14px; color: var(--muted); }
+
+        /* Table */
+        .table-wrap { overflow-x: auto; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            background: var(--surface);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+
+        thead th {
+            background: var(--primary);
+            color: white;
+            padding: 12px 14px;
+            text-align: left;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        thead th:hover { background: #2563a8; }
+        thead th .sort-icon { margin-left: 4px; opacity: 0.6; }
+
+        tbody tr:nth-child(even) { background: var(--bg); }
+        tbody tr:hover { background: #EBF4FF; }
+
+        tbody td {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-A { background: #DBEAFE; color: #1D4ED8; }
+        .badge-B { background: #D1FAE5; color: #065F46; }
+        .badge-C { background: #EDE9FE; color: #5B21B6; }
+
+        .grade-cell { font-size: 18px; font-weight: bold; color: var(--primary); }
+
+        .penalty-tag {
+            font-size: 11px;
+            color: var(--error);
+            font-weight: 600;
+        }
+
+        /* Error / loading */
+        .state-screen {
+            text-align: center;
+            margin-top: 100px;
+            color: var(--muted);
+        }
+
+        .state-screen h2 { margin-bottom: 10px; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active { display: flex; }
+
+        .modal-box {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            max-width: 560px;
+            width: 92%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-box h2 { color: var(--primary); margin-bottom: 4px; }
+        .modal-box .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+
+        .detail-row .key { color: var(--muted); }
+        .detail-row .val { font-weight: 600; }
+
+        .modal-footer { display: flex; justify-content: flex-end; margin-top: 20px; }
+
+        button.btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        button.btn-close { background: var(--border); color: var(--text); }
+        button.btn-close:hover { background: #CBD5E1; }
+    </style>
+</head>
+
+<body>
+
+<div id="noSourceScreen" class="state-screen" style="display:none;">
+    <h2 style="color:var(--error);">No Source Configured</h2>
+    <p>Add <code>?src=YOUR_APPS_SCRIPT_URL</code> to the page URL.</p>
+</div>
+
+<div id="loadingScreen" class="state-screen">
+    <h2>Loading submissions...</h2>
+    <p>Fetching data from the spreadsheet.</p>
+</div>
+
+<div id="errorScreen" class="state-screen" style="display:none;">
+    <h2 style="color:var(--error);">Could not load data</h2>
+    <p id="errorMsg"></p>
+</div>
+
+<div id="appShell" style="display:none;">
+    <div class="topbar">
+        <div>
+            <h1 id="adminTitle">Exam Admin</h1>
+            <div class="subtitle" id="adminSubtitle">Loading...</div>
+        </div>
+        <div style="font-size:13px; opacity:0.8;">Teacher view — sorted by last name</div>
+    </div>
+
+    <div class="container">
+
+        <div class="stats-row" id="statsRow"></div>
+
+        <div class="toolbar">
+            <label>Filter by class:</label>
+            <select id="classFilter" onchange="renderTable()">
+                <option value="">All Classes</option>
+            </select>
+
+            <label>Filter by set:</label>
+            <select id="setFilter" onchange="renderTable()">
+                <option value="">All Sets</option>
+                <option value="A">Set A</option>
+                <option value="B">Set B</option>
+                <option value="C">Set C</option>
+            </select>
+
+            <label>Search name:</label>
+            <input type="text" id="nameSearch" placeholder="Last name..." oninput="renderTable()" style="min-width:160px;">
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th onclick="sortBy('lastName')">Last Name <span class="sort-icon" id="sort-lastName">▼</span></th>
+                        <th onclick="sortBy('firstName')">First Name <span class="sort-icon" id="sort-firstName"></span></th>
+                        <th onclick="sortBy('class')">Class <span class="sort-icon" id="sort-class"></span></th>
+                        <th onclick="sortBy('set')">Set <span class="sort-icon" id="sort-set"></span></th>
+                        <th onclick="sortBy('percentage')">% <span class="sort-icon" id="sort-percentage"></span></th>
+                        <th onclick="sortBy('finalGrade')">Grade <span class="sort-icon" id="sort-finalGrade"></span></th>
+                        <th onclick="sortBy('timestamp')">Submitted <span class="sort-icon" id="sort-timestamp"></span></th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+
+        <p id="rowCount" style="margin-top:12px; font-size:13px; color:var(--muted);"></p>
+    </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div id="detailModal" class="modal">
+    <div class="modal-box">
+        <h2 id="modalName"></h2>
+        <div class="sub" id="modalSub"></div>
+        <div id="modalBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-close" onclick="closeModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const params = new URLSearchParams(window.location.search);
+    const appsScriptUrl = params.get('src') || '';
+
+    var allSubmissions = [];
+    var sortKey = 'lastName';
+    var sortAsc = true;
+
+    if (!appsScriptUrl) {
+        document.getElementById('loadingScreen').style.display = 'none';
+        document.getElementById('noSourceScreen').style.display = 'block';
+    } else {
+        loadData();
+    }
+
+    function loadData() {
+        Promise.all([
+            fetch(appsScriptUrl + '?action=submissions').then(function(r) { return r.json(); }),
+            fetch(appsScriptUrl + '?action=config').then(function(r) { return r.json(); })
+        ])
+        .then(function(results) {
+            var subData = results[0];
+            var cfgData = results[1];
+
+            document.getElementById('loadingScreen').style.display = 'none';
+
+            if (!subData.submissions) { throw new Error('Unexpected response from server.'); }
+
+            allSubmissions = subData.submissions;
+
+            applyConfig(cfgData.config || {});
+            buildClassFilter();
+            buildStats();
+            renderTable();
+
+            document.getElementById('appShell').style.display = 'block';
+        })
+        .catch(function(err) {
+            document.getElementById('loadingScreen').style.display = 'none';
+            document.getElementById('errorMsg').textContent = err.message;
+            document.getElementById('errorScreen').style.display = 'block';
+        });
+    }
+
+    function applyConfig(config) {
+        if (config.exam_title) {
+            document.getElementById('adminTitle').textContent = config.exam_title + ' — Admin';
+            document.title = config.exam_title + ' Admin';
+        }
+        if (config.exam_subtitle) {
+            document.getElementById('adminSubtitle').textContent = config.exam_subtitle;
+        }
+    }
+
+    function buildClassFilter() {
+        var classes = {};
+        allSubmissions.forEach(function(s) { classes[s.class] = true; });
+        var sel = document.getElementById('classFilter');
+        Object.keys(classes).sort().forEach(function(c) {
+            var opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            sel.appendChild(opt);
+        });
+    }
+
+    function buildStats() {
+        var total = allSubmissions.length;
+        if (total === 0) { return; }
+
+        var avgPct = Math.round(allSubmissions.reduce(function(s, r) { return s + r.percentage; }, 0) / total);
+        var avgGrade = (allSubmissions.reduce(function(s, r) { return s + parseFloat(r.finalGrade) || 0; }, 0) / total).toFixed(2);
+        var withPenalty = allSubmissions.filter(function(s) { return s.penalty > 0; }).length;
+        var withBonus   = allSubmissions.filter(function(s) { return s.bonus > 0; }).length;
+
+        var row = document.getElementById('statsRow');
+        [
+            { value: total,       label: 'Submissions' },
+            { value: avgPct + '%', label: 'Avg Score' },
+            { value: avgGrade,    label: 'Avg Grade' },
+            { value: withPenalty, label: 'With Penalty' },
+            { value: withBonus,   label: 'Yggdrasil Bonus' }
+        ].forEach(function(s) {
+            var card = document.createElement('div');
+            card.className = 'stat-card';
+            card.innerHTML = '<div class="value">' + s.value + '</div><div class="label">' + s.label + '</div>';
+            row.appendChild(card);
+        });
+    }
+
+    function getFiltered() {
+        var cls   = document.getElementById('classFilter').value;
+        var set   = document.getElementById('setFilter').value;
+        var query = document.getElementById('nameSearch').value.trim().toLowerCase();
+
+        return allSubmissions.filter(function(s) {
+            if (cls && s.class !== cls) { return false; }
+            if (set && s.set !== set)   { return false; }
+            if (query && s.lastName.toLowerCase().indexOf(query) === -1 &&
+                         s.firstName.toLowerCase().indexOf(query) === -1) { return false; }
+            return true;
+        });
+    }
+
+    function sortBy(key) {
+        if (sortKey === key) {
+            sortAsc = !sortAsc;
+        } else {
+            sortKey = key;
+            sortAsc = key === 'lastName' || key === 'firstName';
+        }
+        renderTable();
+    }
+
+    function renderTable() {
+        var rows = getFiltered();
+
+        rows.sort(function(a, b) {
+            var av = a[sortKey] || '';
+            var bv = b[sortKey] || '';
+            if (sortKey === 'percentage' || sortKey === 'finalGrade') {
+                av = parseFloat(av) || 0;
+                bv = parseFloat(bv) || 0;
+            } else {
+                av = String(av).toLowerCase();
+                bv = String(bv).toLowerCase();
+            }
+            if (av < bv) { return sortAsc ? -1 : 1; }
+            if (av > bv) { return sortAsc ? 1 : -1; }
+            return 0;
+        });
+
+        // Update sort icons
+        ['lastName','firstName','class','set','percentage','finalGrade','timestamp'].forEach(function(k) {
+            var el = document.getElementById('sort-' + k);
+            if (el) { el.textContent = sortKey === k ? (sortAsc ? '▲' : '▼') : ''; }
+        });
+
+        var tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+
+        rows.forEach(function(s) {
+            var tr = document.createElement('tr');
+
+            var date = '';
+            try { date = new Date(s.timestamp).toLocaleString(); } catch(e) { date = s.timestamp; }
+
+            var penaltyTag = s.penalty > 0
+                ? '<br><span class="penalty-tag">-' + s.penalty + ' penalty</span>'
+                : '';
+
+            var bonusTag = s.bonus > 0
+                ? '<br><span style="font-size:11px; color:var(--ygg); font-weight:600;">+' + s.bonus + ' Ygg</span>'
+                : '';
+
+            tr.innerHTML =
+                '<td>' + escapeHtml(s.lastName) + '</td>' +
+                '<td>' + escapeHtml(s.firstName) + '</td>' +
+                '<td>' + escapeHtml(s.class) + '</td>' +
+                '<td><span class="badge badge-' + s.set + '">' + s.set + '</span></td>' +
+                '<td>' + s.percentage + '%' + penaltyTag + '</td>' +
+                '<td><span class="grade-cell">' + s.finalGrade + '</span>' + bonusTag + '</td>' +
+                '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(date) + '</td>' +
+                '<td></td>';
+
+            var detailBtn = document.createElement('button');
+            detailBtn.className = 'btn btn-close';
+            detailBtn.style.padding = '5px 12px';
+            detailBtn.style.fontSize = '12px';
+            detailBtn.textContent = 'View';
+            detailBtn.onclick = (function(sub) { return function() { openModal(sub); }; })(s);
+            tr.lastElementChild.appendChild(detailBtn);
+
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('rowCount').textContent = rows.length + ' student' + (rows.length !== 1 ? 's' : '') + ' shown';
+    }
+
+    function openModal(s) {
+        document.getElementById('modalName').textContent = s.lastName + ', ' + s.firstName;
+        document.getElementById('modalSub').textContent = 'Class ' + s.class + ' — Set ' + s.set;
+
+        var body = document.getElementById('modalBody');
+        body.innerHTML = '';
+
+        var rows = [
+            ['Timestamp',      new Date(s.timestamp).toLocaleString()],
+            ['MC Score',       s.mcScore + ' / ' + s.mcMax],
+            ['Open Score',     s.openScore + ' / ' + s.openMax],
+            ['Penalty',        s.penalty > 0 ? '-' + s.penalty + ' pts' : 'None'],
+            ['Total Score',    s.scoreAfterPenalty + ' / ' + s.maxScore],
+            ['Percentage',     s.percentage + '%'],
+            ['Base Grade',     s.finalGrade],
+            ['Yggdrasil Bonus',s.bonus > 0 ? '+' + s.bonus : 'None'],
+            ['Final Grade',    s.finalGrade]
+        ];
+
+        rows.forEach(function(pair) {
+            var div = document.createElement('div');
+            div.className = 'detail-row';
+            var key = document.createElement('span');
+            key.className = 'key';
+            key.textContent = pair[0];
+            var val = document.createElement('span');
+            val.className = 'val';
+            val.textContent = pair[1];
+            div.appendChild(key);
+            div.appendChild(val);
+            body.appendChild(div);
+        });
+
+        document.getElementById('detailModal').classList.add('active');
+    }
+
+    function closeModal() {
+        document.getElementById('detailModal').classList.remove('active');
+    }
+
+    function escapeHtml(text) {
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(String(text)));
+        return d.innerHTML;
+    }
+</script>
+</body>
+
+</html>

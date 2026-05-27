@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI-Graded Exam">
+    <title>Exam</title>
+
+    <style>
+        :root {
+            --primary-color: #1F4E78;
+            --secondary-color: #27AE60;
+            --accent-color: #E74C3C;
+            --yggdrasil-color: #8E44AD;
+            --bg-color: #F8FAFC;
+            --surface-color: #FFFFFF;
+            --text-main: #0F172A;
+            --text-muted: #64748B;
+            --border-color: #E2E8F0;
+            --success-color: #27AE60;
+            --error-color: #E74C3C;
+            --warning-color: #F39C12;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.6;
+        }
+
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+        #setSelectionScreen,
+        #studentInfoScreen,
+        #examContainer,
+        #waitingScreen,
+        #resultsScreen { display: none; }
+
+        .active { display: block !important; }
+
+        /* Set Selection */
+        .set-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin: 40px 0;
+        }
+
+        .set-option {
+            background: var(--surface-color);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .set-option:hover {
+            border-color: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+
+        .set-option h3 { color: var(--primary-color); margin-bottom: 10px; }
+
+        .set-option .warning {
+            background: #FFF3CD;
+            border-left: 4px solid var(--warning-color);
+            padding: 10px;
+            margin-top: 15px;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #856404;
+        }
+
+        /* Yggdrasil */
+        .yggdrasil-header {
+            background: linear-gradient(135deg, #4A235A, #8E44AD);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 40px 0 20px 0;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(142,68,173,0.3);
+        }
+
+        /* Exam Header */
+        .exam-header {
+            background: linear-gradient(135deg, var(--primary-color), #2E75B6);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #timer { font-size: 28px; font-weight: bold; color: white; font-family: monospace; }
+        #timer.warning { color: var(--warning-color); animation: pulse 1s infinite; }
+        #timer.critical { color: var(--error-color); animation: pulse 0.5s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to   { transform: translateY(0);     opacity: 1; }
+        }
+
+        /* Questions */
+        .question-card {
+            background: var(--surface-color);
+            border-left: 4px solid var(--primary-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .question-number {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .question-text { font-size: 16px; font-weight: 600; margin-bottom: 15px; white-space: pre-wrap; }
+
+        .mc-option {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+
+        .mc-option.selected { border-color: var(--secondary-color); background: rgba(39,174,96,0.05); }
+        .mc-option input { margin-right: 12px; }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            font-family: inherit;
+            resize: vertical;
+        }
+
+        textarea:focus { outline: none; border-color: var(--secondary-color); }
+
+        button { padding: 12px 24px; font-size: 16px; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; }
+        .btn-primary { background: var(--secondary-color); color: white; }
+        .btn-primary:hover { background: #219653; }
+        .btn-danger { background: var(--error-color); color: white; }
+
+        /* Name fields side by side */
+        .name-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .name-row > div { flex: 1; }
+
+        /* Modals */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0; top: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active { display: flex; }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .modal-content.preview-modal-content {
+            max-width: 680px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+
+        .modal-buttons { display: flex; justify-content: flex-end; margin-top: 20px; gap: 10px; }
+
+        /* Tables */
+        .breakdown-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+
+        .breakdown-table th,
+        .breakdown-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }
+
+        .breakdown-table th { background: var(--bg-color); color: var(--primary-color); }
+
+        details summary {
+            cursor: pointer;
+            color: var(--primary-color);
+            font-weight: 600;
+            outline: none;
+        }
+
+        details summary:hover { text-decoration: underline; }
+        details summary::-webkit-details-marker { display: none; }
+
+        details div {
+            margin-top: 10px;
+            padding: 10px;
+            background: var(--bg-color);
+            border-radius: 6px;
+            border-left: 3px solid var(--border-color);
+            white-space: pre-wrap;
+            color: var(--text-main);
+        }
+
+        .grading-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .grading-table th,
+        .grading-table td { border: 1px solid var(--border-color); padding: 5px; }
+
+        .grading-table th { background: var(--bg-color); }
+
+        .notification-toast {
+            position: fixed;
+            top: 20px; right: 20px;
+            background: var(--primary-color);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- NO SOURCE SCREEN -->
+    <div id="noSourceScreen" style="display:none;">
+        <div class="container" style="text-align:center; margin-top:120px;">
+            <div style="font-size:64px; margin-bottom:20px;">🔗</div>
+            <h2 style="color: var(--primary-color);">No Exam Link Configured</h2>
+            <p style="color: var(--text-muted); margin-top:14px; font-size:16px; max-width:500px; margin-left:auto; margin-right:auto;">
+                Please use the link provided by your teacher.<br>
+                This page requires a <code>?src=</code> parameter to load your exam.
+            </p>
+        </div>
+    </div>
+
+    <!-- EXAM CLOSED SCREEN -->
+    <div id="examClosedScreen" style="display:none;">
+        <div class="container" style="text-align:center; margin-top:120px;">
+            <div style="font-size:64px; margin-bottom:20px;">🔒</div>
+            <h2 id="closedExamTitle" style="color: var(--primary-color);">Exam</h2>
+            <p style="color: var(--text-muted); margin-top:14px; font-size:16px; max-width:500px; margin-left:auto; margin-right:auto;">
+                The exam has not been activated by your teacher yet.<br>
+                Please wait and refresh this page when instructed to begin.
+            </p>
+        </div>
+    </div>
+
+    <!-- LOADING SCREEN -->
+    <div id="loadingScreen" class="active">
+        <div class="container" style="text-align:center; margin-top:120px;">
+            <h2 style="color: var(--primary-color);">Loading Exam...</h2>
+            <p style="color: var(--text-muted); margin-top:10px;">Fetching questions, please wait.</p>
+            <div style="margin-top:30px; font-size:36px;">⏳</div>
+        </div>
+    </div>
+
+    <!-- SET SELECTION SCREEN -->
+    <div id="setSelectionScreen">
+        <div class="container">
+            <h1 id="examTitle" style="text-align:center; color:var(--primary-color); margin-bottom:10px;">Exam</h1>
+            <p id="examSubtitle" style="text-align:center; color:var(--text-muted); margin-bottom:40px;">Select your exam set.</p>
+            <div class="set-options" id="setOptionsContainer"></div>
+        </div>
+    </div>
+
+    <!-- STUDENT INFO SCREEN -->
+    <div id="studentInfoScreen">
+        <div class="container">
+            <h2 style="color: var(--primary-color); margin-bottom: 20px;">Before We Start...</h2>
+
+            <div style="background:#FDEDEC; border-left:4px solid var(--error-color); padding:20px; border-radius:8px; margin-bottom:20px;">
+                <h3 style="color:var(--error-color); margin-bottom:10px; font-size:16px;">⚠️ ANTI-CHEATING SYSTEM ACTIVE</h3>
+                <p style="font-size:14px; color:var(--text-main);">Leaving this browser tab will result in automatic penalties applied to your final score:</p>
+                <ul style="font-size:14px; margin-left:20px; margin-top:5px; color:var(--error-color); font-weight:bold;">
+                    <li>1st Switch: Warning &amp; -1 Point Deduction</li>
+                    <li>2nd Switch: Final Warning &amp; -3 Points Deduction</li>
+                    <li>3rd Switch: Immediate Auto-Submission</li>
+                </ul>
+            </div>
+
+            <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:25px;">
+                <div style="flex:1; min-width:300px; background:#F0F7FF; border-left:4px solid var(--primary-color); padding:20px; border-radius:8px;">
+                    <h3 style="color:var(--primary-color); margin-bottom:10px; font-size:16px;">📐 How to Answer Math</h3>
+                    <p style="font-size:14px;">Show your working process to earn partial credit. Example:</p>
+                    <div style="background:white; padding:10px; border:1px solid var(--border-color); border-radius:6px; font-family:monospace; font-size:13px; margin-top:10px;">
+                        Formula: I = V / R<br>Math: I = 7.4 / 330<br>Answer: 0.022A
+                    </div>
+                </div>
+
+                <div style="flex:1; min-width:300px; background:#F8FAFC; border:1px solid var(--border-color); padding:20px; border-radius:8px;">
+                    <h3 style="color:var(--text-main); margin-bottom:10px; font-size:16px;">📊 Grading Scale (<span id="scaleSetName"></span>)</h3>
+                    <table class="grading-table" id="gradingScaleTable"></table>
+                </div>
+            </div>
+
+            <form id="studentInfoForm">
+                <div class="name-row">
+                    <div>
+                        <label style="display:block; margin-bottom:5px; font-weight:600;">First Name *</label>
+                        <input type="text" id="studentFirstName" required autocomplete="given-name"
+                            style="width:100%; padding:10px; border:2px solid var(--border-color); border-radius:6px;">
+                    </div>
+                    <div>
+                        <label style="display:block; margin-bottom:5px; font-weight:600;">Last Name *</label>
+                        <input type="text" id="studentLastName" required autocomplete="family-name"
+                            style="width:100%; padding:10px; border:2px solid var(--border-color); border-radius:6px;">
+                    </div>
+                </div>
+                <div style="margin-bottom:20px;">
+                    <label style="display:block; margin-bottom:5px; font-weight:600;">Your Class *</label>
+                    <select id="studentClass" required
+                        style="width:100%; padding:10px; border:2px solid var(--border-color); border-radius:6px;">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+                <button type="button" class="btn-primary" onclick="startExam()" style="width:100%;">I Understand — Start Exam</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- EXAM CONTAINER -->
+    <div id="examContainer">
+        <div class="container">
+            <div class="exam-header">
+                <div>
+                    <h1 id="examHeaderTitle">Exam</h1>
+                    <div class="info">Set <span id="setDisplay"></span> | <span id="studentNameDisplay"></span></div>
+                </div>
+                <div id="timer">60:00</div>
+            </div>
+
+            <div id="questionsContainer" class="questions-container"></div>
+
+            <div class="yggdrasil-header">
+                <h2 style="margin-bottom:5px; font-size:24px;">🌳✨ The Yggdrasil Challenge ✨🌳</h2>
+                <p style="font-size:14px; opacity:0.9;">(Optional Boss Challenge) Earn +0.3 bonus points to your final grade for every correct answer.</p>
+            </div>
+            <div id="yggdrasilContainer" class="questions-container"></div>
+
+            <div style="margin-top:40px; display:flex; gap:10px;">
+                <button type="button" class="btn-primary" onclick="submitExam()" style="flex:1;">Submit Exam</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WAITING SCREEN -->
+    <div id="waitingScreen">
+        <div class="container" style="text-align:center; margin-top:100px;">
+            <h1 style="color: var(--primary-color);">Grading in Progress 🤖</h1>
+            <p style="font-size:18px; color:var(--text-muted);">Please wait while the AI evaluates your answers...</p>
+        </div>
+    </div>
+
+    <!-- RESULTS SCREEN -->
+    <div id="resultsScreen">
+        <div class="container">
+            <div class="results-container">
+                <div style="text-align:center; margin-bottom:30px;">
+                    <h1 style="color: var(--primary-color);">Exam Complete! 🎉</h1>
+                    <p style="color: var(--text-muted);"><span id="resultsName"></span></p>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:30px;">
+                    <div style="background:var(--bg-color); padding:20px; border-radius:8px; text-align:center; border:1px solid var(--border-color);">
+                        <p style="color:var(--text-muted); font-size:14px; text-transform:uppercase;">Raw Score</p>
+                        <h2 id="totalScoreDisplay" style="color:var(--primary-color); font-size:32px; margin:10px 0;">0/60</h2>
+                        <p id="penaltyDisplay" style="color:var(--error-color); font-size:12px; font-weight:bold;"></p>
+                    </div>
+                    <div style="background:#F0F7FF; padding:20px; border-radius:8px; text-align:center; border:1px solid var(--primary-color);">
+                        <p style="color:var(--text-muted); font-size:14px; text-transform:uppercase;">Final Grade</p>
+                        <h2 id="gradeDisplay" style="color:var(--secondary-color); font-size:48px; margin:5px 0;">—</h2>
+                        <p id="bonusDisplay" style="color:var(--yggdrasil-color); font-size:12px; font-weight:bold;"></p>
+                    </div>
+                </div>
+
+                <h3 style="color:var(--primary-color); border-bottom:2px solid var(--border-color); padding-bottom:10px; margin-bottom:15px;">
+                    AI Feedback &amp; Answers
+                </h3>
+                <table class="breakdown-table">
+                    <thead>
+                        <tr>
+                            <th>Q</th>
+                            <th>Question</th>
+                            <th>Feedback &amp; Points</th>
+                            <th>Your Answer</th>
+                        </tr>
+                    </thead>
+                    <tbody id="breakdownBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <div id="warningModal" class="modal">
+        <div class="modal-content">
+            <h2 style="color:var(--error-color);">⚠️ Anti-Cheating Warning</h2>
+            <p id="warningText" style="font-weight:bold;"></p>
+            <p style="font-size:14px; color:var(--text-muted);">Please remain on this browser tab.</p>
+            <div class="modal-buttons">
+                <button type="button" class="btn-danger" onclick="closeWarningModal()">I Understand</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="previewModal" class="modal">
+        <div class="modal-content preview-modal-content">
+            <h2 id="previewSetTitle" style="color:var(--primary-color); margin-bottom:5px;"></h2>
+            <p style="font-size:14px; color:var(--text-muted); margin-bottom:20px;">Preview the questions below before committing to this set.</p>
+            <div id="previewQuestionList"></div>
+            <div class="modal-buttons">
+                <button type="button" onclick="cancelPreview()" style="background:var(--border-color); color:var(--text-main);">Back</button>
+                <button type="button" class="btn-primary" onclick="confirmPreview()">Choose This Set</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const appsScriptUrl = params.get('src') || '';
+
+        const examConfig = { durationMinutes: 60, appsScriptUrl };
+
+        const GRADE_BOUNDARIES = {
+            A: [{ grade: '2.3', min: 85 }, { grade: '2.0', min: 70 }, { grade: '1.7', min: 50 }, { grade: '1.3', min: 35 }, { grade: '1.0', min: 0 }],
+            B: [{ grade: '3.3', min: 85 }, { grade: '3.0', min: 75 }, { grade: '2.7', min: 65 }, { grade: '2.3', min: 55 }, { grade: '2.0', min: 45 }, { grade: '1.7', min: 35 }, { grade: '1.3', min: 20 }, { grade: '1.0', min: 0 }],
+            C: [{ grade: '4.0', min: 90 }, { grade: '3.7', min: 80 }, { grade: '3.3', min: 70 }, { grade: '3.0', min: 60 }, { grade: '2.7', min: 50 }, { grade: '2.3', min: 40 }, { grade: '2.0', min: 30 }, { grade: '1.7', min: 20 }, { grade: '1.3', min: 10 }, { grade: '1.0', min: 0 }]
+        };
+
+        const SET_META = {
+            A: { label: 'SET A — Standard',     maxGrade: '2.3', description: 'Foundational questions.' },
+            B: { label: 'SET B — Intermediate', maxGrade: '3.3', description: 'Application & calculation.' },
+            C: { label: 'SET C — Advanced',     maxGrade: '4.0', description: 'Complex system analysis.' }
+        };
+
+        var questions  = {};
+        var pendingSet = null;
+
+        window.addEventListener('load', function () {
+            if (!appsScriptUrl) {
+                document.getElementById('loadingScreen').style.display = 'none';
+                document.getElementById('noSourceScreen').style.display = 'block';
+                return;
+            }
+
+            fetch(appsScriptUrl + '?action=questions')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.success && data.questions) {
+                        questions = data.questions;
+                        if (data.config) { applyConfig(data.config); }
+                        buildSetOptions();
+                        var ls = document.getElementById('loadingScreen');
+                        ls.classList.remove('active');
+                        ls.style.display = 'none';
+                        if (data.config && data.config.exam_active === 'false') {
+                            document.getElementById('examClosedScreen').style.display = 'block';
+                        } else {
+                            document.getElementById('setSelectionScreen').classList.add('active');
+                        }
+                    } else {
+                        showLoadError('Failed to load exam questions. Please refresh or contact your teacher.');
+                    }
+                })
+                .catch(function () {
+                    showLoadError('Could not connect to the server. Check your internet connection and refresh.');
+                });
+        });
+
+        function buildSetOptions() {
+            var container = document.getElementById('setOptionsContainer');
+            container.innerHTML = '';
+            ['A', 'B', 'C'].forEach(function (letter) {
+                if (!questions[letter] || !questions[letter].length) { return; }
+                var meta = SET_META[letter] || { label: 'SET ' + letter, maxGrade: '—', description: '' };
+                var card = document.createElement('div');
+                card.className = 'set-option';
+                card.onclick = function () { previewSet(letter); };
+                card.innerHTML =
+                    '<h3>' + meta.label + '</h3>' +
+                    '<div class="warning"><strong>Maximum Grade: ' + meta.maxGrade + '</strong>' +
+                    (meta.description ? '<br><small>' + meta.description + '</small>' : '') + '</div>';
+                container.appendChild(card);
+            });
+        }
+
+        function parseBoundaryString(str) {
+            return str.split(',').map(function (pair) {
+                var parts = pair.trim().split(':');
+                return parts.length === 2 ? { grade: parts[0].trim(), min: parseInt(parts[1].trim(), 10) } : null;
+            }).filter(Boolean);
+        }
+
+        function applyConfig(config) {
+            if (config.exam_duration_minutes) {
+                var mins = parseInt(config.exam_duration_minutes, 10);
+                if (!isNaN(mins) && mins > 0) { examConfig.durationMinutes = mins; }
+            }
+            if (config.exam_title) {
+                document.title = config.exam_title;
+                ['examTitle', 'examHeaderTitle', 'closedExamTitle'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) { el.textContent = config.exam_title; }
+                });
+            }
+            if (config.exam_subtitle) {
+                document.getElementById('examSubtitle').textContent = config.exam_subtitle;
+            }
+            if (config.class_options) {
+                var classes = config.class_options.split(',').map(function (c) { return c.trim(); }).filter(Boolean);
+                var sel = document.getElementById('studentClass');
+                sel.innerHTML = '<option value="">-- Select --</option>';
+                classes.forEach(function (cls) {
+                    var opt = document.createElement('option');
+                    opt.value = cls;
+                    opt.textContent = cls;
+                    sel.appendChild(opt);
+                });
+            }
+            ['A', 'B', 'C'].forEach(function (set) {
+                var key = 'grade_boundaries_' + set;
+                if (config[key]) {
+                    var parsed = parseBoundaryString(config[key]);
+                    if (parsed && parsed.length) { GRADE_BOUNDARIES[set] = parsed; }
+                }
+            });
+        }
+
+        function showLoadError(msg) {
+            var ls = document.getElementById('loadingScreen');
+            ls.innerHTML =
+                '<div class="container" style="text-align:center; margin-top:120px;">' +
+                '<h2 style="color:var(--error-color);">Error</h2>' +
+                '<p style="margin-top:10px; color:var(--text-muted);">' + msg + '</p>' +
+                '</div>';
+        }
+
+        // --- GLOBAL STATE ---
+        let selectedSet         = null;
+        let currentFirstName    = null;
+        let currentLastName     = null;
+        let currentStudentClass = null;
+        let examActive          = false;
+        let examStartTime       = null;
+        let tabSwitches         = 0;
+        let penaltyPoints       = 0;
+        let answers             = { mc: {}, openEnded: {}, ygg: {} };
+
+        // --- SET PREVIEW ---
+        function previewSet(setLetter) {
+            pendingSet = setLetter;
+            var qs = questions[setLetter];
+            if (!qs || !qs.length) { selectSet(setLetter); return; }
+
+            var meta = SET_META[setLetter] || { label: 'SET ' + setLetter };
+            document.getElementById('previewSetTitle').textContent = meta.label;
+
+            var list = document.getElementById('previewQuestionList');
+            list.innerHTML = '';
+            qs.forEach(function (q, i) {
+                var typeLabel = q.type === 'mc'
+                    ? '(Multiple Choice, ' + q.points + ' pts)'
+                    : '(Open-Ended, ' + q.points + ' pts)';
+                var item = document.createElement('div');
+                item.style.cssText = 'margin-bottom:14px; padding:12px; background:var(--bg-color); border-radius:6px; border-left:3px solid var(--primary-color);';
+                var meta2 = document.createElement('div');
+                meta2.style.cssText = 'font-size:12px; color:var(--text-muted); margin-bottom:4px;';
+                meta2.textContent = 'Question ' + (i + 1) + ' ' + typeLabel;
+                var text = document.createElement('div');
+                text.style.fontWeight = '600';
+                text.textContent = q.text;
+                item.appendChild(meta2);
+                item.appendChild(text);
+                list.appendChild(item);
+            });
+            document.getElementById('previewModal').classList.add('active');
+        }
+
+        function confirmPreview() {
+            document.getElementById('previewModal').classList.remove('active');
+            selectSet(pendingSet);
+        }
+
+        function cancelPreview() {
+            document.getElementById('previewModal').classList.remove('active');
+            pendingSet = null;
+        }
+
+        // --- INIT EXAM ---
+        function selectSet(setLetter) {
+            selectedSet = setLetter;
+            document.getElementById('setSelectionScreen').classList.remove('active');
+
+            document.getElementById('scaleSetName').textContent = 'Set ' + setLetter;
+            var table = document.getElementById('gradingScaleTable');
+            table.innerHTML = '<tr><th>Grade</th><th>Required %</th></tr>';
+            (GRADE_BOUNDARIES[setLetter] || []).forEach(function (b) {
+                var row = table.insertRow();
+                var c1 = row.insertCell(); c1.style.cssText = 'font-weight:bold; color:var(--primary-color)'; c1.textContent = b.grade;
+                var c2 = row.insertCell(); c2.textContent = b.min + '%';
+            });
+            document.getElementById('studentInfoScreen').classList.add('active');
+        }
+
+        function startExam() {
+            var fn = document.getElementById('studentFirstName').value.trim();
+            var ln = document.getElementById('studentLastName').value.trim();
+            var cls = document.getElementById('studentClass').value;
+            if (!fn || !ln || !cls) { return alert('Please fill in all fields.'); }
+
+            currentFirstName    = fn;
+            currentLastName     = ln;
+            currentStudentClass = cls;
+
+            document.getElementById('studentInfoScreen').classList.remove('active');
+            document.getElementById('examContainer').classList.add('active');
+            document.getElementById('setDisplay').textContent         = selectedSet;
+            document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
+
+            renderQuestions();
+            examActive    = true;
+            examStartTime = Date.now();
+            startTimer();
+            enableAntiCheating();
+        }
+
+        function renderQuestions() {
+            var container = document.getElementById('questionsContainer');
+            container.innerHTML = '';
+            questions[selectedSet].forEach(function (q, i) {
+                container.appendChild(createQuestionCard(q, i + 1, 'openEnded'));
+            });
+
+            var hasYgg = questions.Yggdrasil && questions.Yggdrasil.length > 0;
+            document.querySelector('.yggdrasil-header').style.display = hasYgg ? '' : 'none';
+            document.getElementById('yggdrasilContainer').style.display = hasYgg ? '' : 'none';
+            if (hasYgg) {
+                var yggContainer = document.getElementById('yggdrasilContainer');
+                yggContainer.innerHTML = '';
+                questions.Yggdrasil.forEach(function (q, i) {
+                    yggContainer.appendChild(createQuestionCard(q, i + 1, 'ygg'));
+                });
+            }
+        }
+
+        function createQuestionCard(q, num, targetDict) {
+            var card = document.createElement('div');
+            card.className = 'question-card';
+            var label = q.section === 'Y' ? 'Boss ' : 'Question ';
+            var html = '<div class="question-number">' + label + num + '</div>' +
+                       '<div class="question-text">' + escapeHtml(q.text) + '</div>';
+
+            if (q.type === 'mc') {
+                html += '<div class="mc-options">';
+                q.shuffled.forEach(function (origIdx, dispIdx) {
+                    var letter = String.fromCharCode(65 + dispIdx);
+                    html += '<label class="mc-option">' +
+                        '<input type="radio" name="' + q.id + '" value="' + letter + '" ' +
+                        'onchange="answers.mc[\'' + q.id + '\']=\'' + letter + '\'">' +
+                        '<span>' + letter + '</span>. ' + escapeHtml(q.options[origIdx]) + '</label>';
+                });
+                html += '</div>';
+            } else {
+                html += '<textarea placeholder="Type answer/calculations..." ' +
+                    'oninput="answers.' + targetDict + '[\'' + q.id + '\']=this.value"></textarea>';
+            }
+            card.innerHTML = html;
+            return card;
+        }
+
+        // --- NOTIFICATIONS ---
+        function showNotification(message, isCritical) {
+            var div = document.createElement('div');
+            div.className = 'notification-toast';
+            if (isCritical) { div.style.backgroundColor = 'var(--error-color)'; }
+            div.textContent = message;
+            document.body.appendChild(div);
+            setTimeout(function () { div.remove(); }, 4000);
+        }
+
+        // --- ANTI-CHEATING ---
+        function enableAntiCheating() {
+            document.addEventListener('visibilitychange', function () {
+                if (!examActive || document.hidden === false) { return; }
+                tabSwitches++;
+                if (tabSwitches === 1) {
+                    penaltyPoints += 1;
+                    showWarning('⚠️ Strike 1: You left the tab. A 1-point penalty has been applied.');
+                } else if (tabSwitches === 2) {
+                    penaltyPoints += 3;
+                    showWarning('🚨 Strike 2 (FINAL WARNING): You left the tab again. A 3-point penalty has been applied. Next switch is auto-submit.');
+                } else if (tabSwitches >= 3) {
+                    submitExamImmediately();
+                }
+            });
+        }
+
+        function showWarning(msg) {
+            document.getElementById('warningText').textContent = msg;
+            document.getElementById('warningModal').classList.add('active');
+        }
+
+        function closeWarningModal() {
+            document.getElementById('warningModal').classList.remove('active');
+        }
+
+        // --- TIMER ---
+        function startTimer() {
+            var timerDisplay = document.getElementById('timer');
+            var timeRemaining = examConfig.durationMinutes * 60;
+
+            var timer = setInterval(function () {
+                timeRemaining--;
+                var minutes = Math.floor(timeRemaining / 60);
+                var seconds = timeRemaining % 60;
+                timerDisplay.textContent =
+                    String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+
+                if (timeRemaining === 300) {
+                    timerDisplay.classList.add('warning');
+                    showNotification('⏰ 5 minutes remaining!');
+                }
+                if (timeRemaining === 60) {
+                    timerDisplay.classList.add('critical');
+                    showNotification('🚨 1 minute remaining - Wrap it up!', true);
+                }
+                if (timeRemaining <= 0) {
+                    clearInterval(timer);
+                    submitExamImmediately();
+                }
+            }, 1000);
+        }
+
+        function submitExam() {
+            if (confirm('Submit Exam? You cannot go back.')) { submitExamImmediately(); }
+        }
+
+        function submitExamImmediately() {
+            examActive = false;
+            document.getElementById('examContainer').classList.remove('active');
+            document.getElementById('waitingScreen').classList.add('active');
+
+            var mcScore = 0;
+            var mcArr   = [];
+
+            questions[selectedSet].forEach(function (q) {
+                if (q.type === 'mc') {
+                    var isCorrect = false;
+                    if (answers.mc[q.id]) {
+                        var selIdx = answers.mc[q.id].charCodeAt(0) - 65;
+                        isCorrect = (q.shuffled[selIdx] === q.correctIndex);
+                        if (isCorrect) { mcScore += q.points; }
+                    }
+                    mcArr.push({ questionId: q.id, selected: answers.mc[q.id] || 'No answer', points: q.points, correct: isCorrect });
+                }
+            });
+
+            var openArr = questions[selectedSet]
+                .filter(function (q) { return q.type === 'openEnded'; })
+                .map(function (q) { return { questionId: q.id, text: answers.openEnded[q.id] || '', points: q.points, rubric: q.rubric }; });
+
+            var yggArr = (questions.Yggdrasil && questions.Yggdrasil.length > 0)
+                ? questions.Yggdrasil.map(function (q) { return { questionId: q.id, text: answers.ygg[q.id] || '', points: q.points, rubric: q.rubric }; })
+                : [];
+
+            fetch(appsScriptUrl, {
+                method: 'POST',
+                body: JSON.stringify({
+                    firstName:     currentFirstName,
+                    lastName:      currentLastName,
+                    class:         currentStudentClass,
+                    set:           selectedSet,
+                    mcAnswers:     mcArr,
+                    openEnded:     openArr,
+                    yggAnswers:    yggArr,
+                    mcScore:       mcScore,
+                    penaltyPoints: penaltyPoints,
+                    tabSwitches:   tabSwitches
+                })
+            })
+            .then(function (r) { return r.json(); })
+            .then(showResults)
+            .catch(function () { alert('Error connecting to server. Please contact your teacher.'); });
+        }
+
+        // --- RESULTS ---
+        function showResults(data) {
+            document.getElementById('waitingScreen').classList.remove('active');
+            document.getElementById('resultsScreen').classList.add('active');
+
+            document.getElementById('resultsName').textContent =
+                data.firstName + ' ' + data.lastName + ' — Class ' + currentStudentClass + ' (Set ' + data.set + ')';
+            document.getElementById('totalScoreDisplay').textContent = data.totalScore + '/' + data.maxScore;
+            document.getElementById('gradeDisplay').textContent = data.finalGrade;
+
+            if (data.penalty > 0) {
+                document.getElementById('penaltyDisplay').textContent = '(-' + data.penalty + ' Anti-Cheating Penalty Applied)';
+            }
+            if (data.bonus > 0) {
+                document.getElementById('bonusDisplay').textContent = '(+' + data.bonus + ' Yggdrasil Bonus Applied!)';
+            }
+
+            var tbody = document.getElementById('breakdownBody');
+            tbody.innerHTML = '';
+
+            questions[data.set].forEach(function (q, i) {
+                var ans = answers.mc[q.id] || answers.openEnded[q.id] || 'No answer';
+                var fbText = '';
+
+                if (q.type === 'mc') {
+                    var correctDisplayIndex = q.shuffled.indexOf(q.correctIndex);
+                    var correctLetter = String.fromCharCode(65 + correctDisplayIndex);
+                    var correctText   = escapeHtml(q.options[q.correctIndex]);
+
+                    if (answers.mc[q.id]) {
+                        var selIdx    = answers.mc[q.id].charCodeAt(0) - 65;
+                        var isCorrect = (q.shuffled[selIdx] === q.correctIndex);
+                        var earned    = isCorrect ? q.points : 0;
+                        fbText = '<span style="color:' + (isCorrect ? 'var(--success-color)' : 'var(--error-color)') + '; font-weight:bold;">' +
+                            earned + '/' + q.points + ' pts</span><br>' + (isCorrect ? '✅ Correct' : '❌ Incorrect');
+                        if (!isCorrect) {
+                            fbText += '<div style="margin-top:8px; font-size:13px; color:var(--text-muted); line-height:1.4;">Correct option was:<br><b>' + correctLetter + '. ' + correctText + '</b></div>';
+                        }
+                    } else {
+                        fbText = '<span style="color:var(--error-color); font-weight:bold;">0/' + q.points + ' pts</span><br>❌ Skipped' +
+                            '<div style="margin-top:8px; font-size:13px; color:var(--text-muted); line-height:1.4;">Correct option was:<br><b>' + correctLetter + '. ' + correctText + '</b></div>';
+                    }
+                } else {
+                    var fb = (data.openFeedback || []).find(function (f) { return f.questionId === q.id; });
+                    fbText = fb
+                        ? '<span style="color:var(--primary-color); font-weight:bold;">' + fb.score + '/' + fb.maxScore + ' pts</span><br>' + escapeHtml(fb.feedback)
+                        : '<span style="color:var(--error-color);">Feedback unavailable</span>';
+                }
+                appendResultRow(tbody, i + 1, q.text, ans, fbText);
+            });
+
+            if (questions.Yggdrasil && questions.Yggdrasil.length > 0) {
+                questions.Yggdrasil.forEach(function (q, i) {
+                    if (answers.ygg[q.id] && answers.ygg[q.id].trim().length > 2) {
+                        var fb = (data.yggFeedback || []).find(function (f) { return f.questionId === q.id; });
+                        var fbText = fb
+                            ? '<span style="color:var(--yggdrasil-color); font-weight:bold;">Boss Score: ' + fb.score + '/' + fb.maxScore + '</span><br>' + escapeHtml(fb.feedback)
+                            : '<span style="color:var(--error-color);">Feedback unavailable</span>';
+                        appendResultRow(tbody, 'Boss ' + (i + 1), q.text, answers.ygg[q.id], fbText);
+                    }
+                });
+            }
+        }
+
+        function appendResultRow(tbody, qNum, questionText, ansText, fbText) {
+            var tr = document.createElement('tr');
+
+            var tdNum = document.createElement('td');
+            var b = document.createElement('b');
+            b.textContent = qNum;
+            tdNum.appendChild(b);
+
+            var tdQ = document.createElement('td');
+            var detailsQ = document.createElement('details');
+            var summaryQ = document.createElement('summary');
+            summaryQ.textContent = '📋 View Question';
+            var divQ = document.createElement('div');
+            divQ.textContent = questionText;
+            detailsQ.appendChild(summaryQ);
+            detailsQ.appendChild(divQ);
+            tdQ.appendChild(detailsQ);
+
+            var tdFb = document.createElement('td');
+            tdFb.innerHTML = fbText;
+
+            var tdAns = document.createElement('td');
+            var detailsAns = document.createElement('details');
+            var summaryAns = document.createElement('summary');
+            summaryAns.textContent = '👀 View Answer';
+            var divAns = document.createElement('div');
+            divAns.textContent = ansText;
+            detailsAns.appendChild(summaryAns);
+            detailsAns.appendChild(divAns);
+            tdAns.appendChild(detailsAns);
+
+            tr.appendChild(tdNum);
+            tr.appendChild(tdQ);
+            tr.appendChild(tdFb);
+            tr.appendChild(tdAns);
+            tbody.appendChild(tr);
+        }
+
+        function escapeHtml(text) {
+            var d = document.createElement('div');
+            d.appendChild(document.createTextNode(text));
+            return d.innerHTML;
+        }
+    </script>
+</body>
+
+</html>
