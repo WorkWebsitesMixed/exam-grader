@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="AI-Graded Exam">
     <title>Exam</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 
     <style>
         :root {
@@ -304,6 +305,20 @@
         </div>
     </div>
 
+    <!-- SIGN IN SCREEN -->
+    <div id="signInScreen" style="display:none;">
+        <div class="container" style="text-align:center; margin-top:80px;">
+            <h1 id="signInTitle" style="color:var(--primary-color); margin-bottom:8px;">Exam</h1>
+            <p id="signInSubtitle" style="color:var(--text-muted); margin-bottom:40px;">Sign in to access the exam.</p>
+            <div style="background:white; border-radius:12px; padding:40px; max-width:420px; margin:0 auto; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid var(--border-color);">
+                <p style="margin-bottom:8px; font-weight:600;">Sign in with your school Google account</p>
+                <p style="font-size:13px; color:var(--text-muted); margin-bottom:28px;">Your name will be filled in automatically.</p>
+                <div id="signinBtn" style="display:flex; justify-content:center; min-height:44px;"></div>
+                <p id="signInError" style="color:var(--error-color); margin-top:16px; font-size:13px; display:none;"></p>
+            </div>
+        </div>
+    </div>
+
     <!-- SET SELECTION SCREEN -->
     <div id="setSelectionScreen">
         <div class="container">
@@ -486,6 +501,10 @@
         var questions  = {};
         var pendingSet = null;
 
+        // Loaded flag — sign-in screen waits for this before proceeding
+        var questionsReady = false;
+        var examClosedAfterLoad = false;
+
         window.addEventListener('load', function () {
             if (!appsScriptUrl) {
                 document.getElementById('loadingScreen').style.display = 'none';
@@ -503,10 +522,13 @@
                         var ls = document.getElementById('loadingScreen');
                         ls.classList.remove('active');
                         ls.style.display = 'none';
+
                         if (data.config && data.config.exam_active === 'false') {
+                            examClosedAfterLoad = true;
                             document.getElementById('examClosedScreen').style.display = 'block';
                         } else {
-                            document.getElementById('setSelectionScreen').classList.add('active');
+                            questionsReady = true;
+                            showSignInScreen();
                         }
                     } else {
                         showLoadError('Failed to load exam questions. Please refresh or contact your teacher.');
@@ -587,14 +609,80 @@
 
         // --- GLOBAL STATE ---
         let selectedSet         = null;
-        let currentFirstName    = null;
-        let currentLastName     = null;
+        let currentFirstName    = '';
+        let currentLastName     = '';
+        let currentEmail        = '';
         let currentStudentClass = null;
         let examActive          = false;
         let examStartTime       = null;
         let tabSwitches         = 0;
         let penaltyPoints       = 0;
         let answers             = { mc: {}, openEnded: {}, ygg: {} };
+
+        // --- GOOGLE SIGN-IN ---
+        // Replace YOUR_GOOGLE_CLIENT_ID with your OAuth 2.0 client ID from Google Cloud Console.
+        // Optionally uncomment the hd line and set your school domain to restrict sign-in.
+        var GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID';
+
+        function showSignInScreen() {
+            ['signInTitle', 'closedExamTitle'].forEach(function(id) {
+                var titleEl = document.getElementById('examTitle');
+                var target  = document.getElementById(id);
+                if (target && titleEl) { target.textContent = titleEl.textContent; }
+            });
+            var st = document.getElementById('signInTitle');
+            var ss2 = document.getElementById('signInSubtitle');
+            if (st) { st.textContent = document.getElementById('examTitle').textContent; }
+            document.getElementById('signInScreen').style.display = 'block';
+            waitForGIS();
+        }
+
+        function waitForGIS() {
+            if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+                initGoogleSignIn();
+            } else {
+                setTimeout(waitForGIS, 150);
+            }
+        }
+
+        function initGoogleSignIn() {
+            if (GOOGLE_CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID') {
+                var err = document.getElementById('signInError');
+                err.textContent = 'Google Sign-In is not configured yet. Contact your teacher.';
+                err.style.display = 'block';
+                return;
+            }
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback:  handleGoogleSignIn,
+                auto_select: false
+                // hd: 'yourschool.edu'
+            });
+            google.accounts.id.renderButton(document.getElementById('signinBtn'), {
+                type: 'standard', theme: 'outline', size: 'large',
+                text: 'sign_in_with', shape: 'rectangular', width: 280
+            });
+        }
+
+        function handleGoogleSignIn(response) {
+            try {
+                var parts   = response.credential.split('.');
+                var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+                currentEmail     = payload.email     || '';
+                currentFirstName = payload.given_name  || '';
+                currentLastName  = payload.family_name || '';
+                // Pre-fill form fields
+                document.getElementById('studentFirstName').value = currentFirstName;
+                document.getElementById('studentLastName').value  = currentLastName;
+                // Proceed to set selection
+                document.getElementById('signInScreen').style.display = 'none';
+                document.getElementById('setSelectionScreen').classList.add('active');
+            } catch (err) {
+                var errEl = document.getElementById('signInError');
+                errEl.textContent = 'Sign-in failed. Please refresh and try again.';
+                errEl.style.display = 'block';
+            }
+        }
 
         // --- SET PREVIEW ---
         function previewSet(setLetter) {
@@ -795,22 +883,32 @@
 
             questions[selectedSet].forEach(function (q) {
                 if (q.type === 'mc') {
-                    var isCorrect = false;
+                    var isCorrect    = false;
+                    var selectedText = 'No answer';
                     if (answers.mc[q.id]) {
-                        var selIdx = answers.mc[q.id].charCodeAt(0) - 65;
-                        isCorrect = (q.shuffled[selIdx] === q.correctIndex);
+                        var selIdx    = answers.mc[q.id].charCodeAt(0) - 65;
+                        isCorrect     = (q.shuffled[selIdx] === q.correctIndex);
+                        selectedText  = q.options[q.shuffled[selIdx]];
                         if (isCorrect) { mcScore += q.points; }
                     }
-                    mcArr.push({ questionId: q.id, selected: answers.mc[q.id] || 'No answer', points: q.points, correct: isCorrect });
+                    mcArr.push({
+                        questionId:   q.id,
+                        questionText: q.text,
+                        selected:     answers.mc[q.id] || 'No answer',
+                        selectedText: selectedText,
+                        correctText:  q.options[q.correctIndex],
+                        points:       q.points,
+                        correct:      isCorrect
+                    });
                 }
             });
 
             var openArr = questions[selectedSet]
                 .filter(function (q) { return q.type === 'openEnded'; })
-                .map(function (q) { return { questionId: q.id, text: answers.openEnded[q.id] || '', points: q.points, rubric: q.rubric }; });
+                .map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.openEnded[q.id] || '', points: q.points, rubric: q.rubric }; });
 
             var yggArr = (questions.Yggdrasil && questions.Yggdrasil.length > 0)
-                ? questions.Yggdrasil.map(function (q) { return { questionId: q.id, text: answers.ygg[q.id] || '', points: q.points, rubric: q.rubric }; })
+                ? questions.Yggdrasil.map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.ygg[q.id] || '', points: q.points, rubric: q.rubric }; })
                 : [];
 
             fetch(appsScriptUrl, {
@@ -818,6 +916,7 @@
                 body: JSON.stringify({
                     firstName:     currentFirstName,
                     lastName:      currentLastName,
+                    email:         currentEmail,
                     class:         currentStudentClass,
                     set:           selectedSet,
                     mcAnswers:     mcArr,

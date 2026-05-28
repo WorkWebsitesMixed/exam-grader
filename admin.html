@@ -458,24 +458,24 @@
 
     function openModal(s) {
         document.getElementById('modalName').textContent = s.lastName + ', ' + s.firstName;
-        document.getElementById('modalSub').textContent = 'Class ' + s.class + ' — Set ' + s.set;
+        document.getElementById('modalSub').textContent  = 'Class ' + s.class + ' — Set ' + s.set + (s.email ? ' — ' + s.email : '');
 
         var body = document.getElementById('modalBody');
         body.innerHTML = '';
 
-        var rows = [
-            ['Timestamp',      new Date(s.timestamp).toLocaleString()],
-            ['MC Score',       s.mcScore + ' / ' + s.mcMax],
-            ['Open Score',     s.openScore + ' / ' + s.openMax],
-            ['Penalty',        s.penalty > 0 ? '-' + s.penalty + ' pts' : 'None'],
-            ['Total Score',    s.scoreAfterPenalty + ' / ' + s.maxScore],
-            ['Percentage',     s.percentage + '%'],
-            ['Base Grade',     s.finalGrade],
-            ['Yggdrasil Bonus',s.bonus > 0 ? '+' + s.bonus : 'None'],
-            ['Final Grade',    s.finalGrade]
+        // Summary rows
+        var summaryPairs = [
+            ['Submitted',       new Date(s.timestamp).toLocaleString()],
+            ['MC Score',        s.mcScore + ' / ' + s.mcMax],
+            ['Open Score',      s.openScore + ' / ' + s.openMax],
+            ['Penalty',         s.penalty > 0 ? '-' + s.penalty + ' pts' : 'None'],
+            ['Total Score',     s.scoreAfterPenalty + ' / ' + s.maxScore],
+            ['Percentage',      s.percentage + '%'],
+            ['Yggdrasil Bonus', s.bonus > 0 ? '+' + s.bonus : 'None'],
+            ['Final Grade',     s.finalGrade]
         ];
 
-        rows.forEach(function(pair) {
+        summaryPairs.forEach(function(pair) {
             var div = document.createElement('div');
             div.className = 'detail-row';
             var key = document.createElement('span');
@@ -483,13 +483,88 @@
             key.textContent = pair[0];
             var val = document.createElement('span');
             val.className = 'val';
+            if (pair[0] === 'Final Grade') {
+                val.style.cssText = 'font-size:20px; color:var(--primary);';
+            }
             val.textContent = pair[1];
             div.appendChild(key);
             div.appendChild(val);
             body.appendChild(div);
         });
 
+        // Answers section — lazy fetch
+        var answersSection = document.createElement('div');
+        answersSection.style.marginTop = '20px';
+
+        var answersTitle = document.createElement('h3');
+        answersTitle.style.cssText = 'color:var(--primary); margin-bottom:12px; font-size:14px; text-transform:uppercase; letter-spacing:1px;';
+        answersTitle.textContent = 'Question Breakdown';
+        answersSection.appendChild(answersTitle);
+
+        var loadingMsg = document.createElement('p');
+        loadingMsg.style.cssText = 'color:var(--muted); font-size:13px;';
+        loadingMsg.textContent = 'Loading answers...';
+        answersSection.appendChild(loadingMsg);
+        body.appendChild(answersSection);
+
         document.getElementById('detailModal').classList.add('active');
+
+        fetch(appsScriptUrl + '?action=details&timestamp=' + encodeURIComponent(s.timestamp))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                answersSection.removeChild(loadingMsg);
+                if (!data.details || data.details.length === 0) {
+                    var none = document.createElement('p');
+                    none.style.cssText = 'color:var(--muted); font-size:13px;';
+                    none.textContent = 'No detailed answers recorded for this submission.';
+                    answersSection.appendChild(none);
+                    return;
+                }
+                data.details.forEach(function(d, idx) {
+                    var card = document.createElement('div');
+                    card.style.cssText = 'background:var(--bg); border-radius:8px; padding:14px; margin-bottom:12px; border-left:3px solid ' +
+                        (d.type === 'yggdrasil' ? 'var(--ygg)' : d.type === 'mc' ? 'var(--secondary)' : 'var(--primary)') + ';';
+
+                    var qLabel = document.createElement('div');
+                    qLabel.style.cssText = 'font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;';
+                    qLabel.textContent = (d.type === 'yggdrasil' ? 'Boss' : 'Question') + ' ' + (idx + 1) +
+                        ' (' + (d.type === 'mc' ? 'Multiple Choice' : d.type === 'yggdrasil' ? 'Yggdrasil' : 'Open-Ended') + ') — ' +
+                        d.aiScore + '/' + d.maxScore + ' pts';
+
+                    var qText = document.createElement('div');
+                    qText.style.cssText = 'font-weight:600; margin-bottom:8px; font-size:13px;';
+                    qText.textContent = d.questionText;
+
+                    var ansLabel = document.createElement('div');
+                    ansLabel.style.cssText = 'font-size:11px; color:var(--muted); margin-bottom:2px;';
+                    ansLabel.textContent = 'Student answer:';
+
+                    var ansText = document.createElement('div');
+                    ansText.style.cssText = 'font-size:13px; background:white; padding:8px; border-radius:4px; border:1px solid var(--border); white-space:pre-wrap; margin-bottom:8px;';
+                    ansText.textContent = d.studentAnswer;
+
+                    var fbLabel = document.createElement('div');
+                    fbLabel.style.cssText = 'font-size:11px; color:var(--muted); margin-bottom:2px;';
+                    fbLabel.textContent = d.type === 'mc' ? 'Result:' : 'AI Feedback:';
+
+                    var fbText = document.createElement('div');
+                    fbText.style.cssText = 'font-size:13px; color:' +
+                        (d.type === 'mc' ? (d.isCorrect === 'TRUE' || d.isCorrect === true ? 'var(--secondary)' : 'var(--error)') : 'var(--primary)') +
+                        '; font-style:italic;';
+                    fbText.textContent = d.aiFeedback;
+
+                    card.appendChild(qLabel);
+                    card.appendChild(qText);
+                    card.appendChild(ansLabel);
+                    card.appendChild(ansText);
+                    card.appendChild(fbLabel);
+                    card.appendChild(fbText);
+                    answersSection.appendChild(card);
+                });
+            })
+            .catch(function() {
+                loadingMsg.textContent = 'Could not load answers.';
+            });
     }
 
     function closeModal() {

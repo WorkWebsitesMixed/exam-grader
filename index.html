@@ -70,6 +70,12 @@
             color: white;
         }
 
+        .btn-results {
+            background: var(--surface);
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+
         .btn-admin {
             background: var(--primary);
             color: white;
@@ -128,12 +134,18 @@
             studentLink.className = 'btn btn-student';
             studentLink.textContent = '🎓 Start Exam (Student)';
 
+            var resultsLink = document.createElement('a');
+            resultsLink.href = 'results.html?src=' + encoded;
+            resultsLink.className = 'btn btn-results';
+            resultsLink.textContent = '📋 My Results (Student)';
+
             var adminLink = document.createElement('a');
             adminLink.href = 'admin.html?src=' + encoded;
             adminLink.className = 'btn btn-admin';
             adminLink.textContent = '🔧 Admin Panel (Teacher)';
 
             btnGroup.appendChild(studentLink);
+            btnGroup.appendChild(resultsLink);
             btnGroup.appendChild(adminLink);
         } else {
             document.getElementById('pageSubtitle').textContent =

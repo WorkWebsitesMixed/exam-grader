@@ -19,36 +19,56 @@ var COL = {
   TIMESTAMP:    1,
   FIRST_NAME:   2,
   LAST_NAME:    3,
-  CLASS:        4,
-  SET:          5,
-  MC_SCORE:     6,
-  OPEN_SCORE:   7,
-  YGG_SCORE:    8,
-  PENALTY:      9,
-  TAB_SWITCHES: 10,
-  TOTAL_SCORE:  11,
-  MAX_SCORE:    12,
-  PERCENTAGE:   13,
-  FINAL_GRADE:  14,
-  BONUS:        15,
-  OPEN_FB:      16,
-  YGG_FB:       17,
-  Q1_AI:        18,
-  Q2_AI:        19,
-  Q3_AI:        20,
-  Q4_AI:        21,
-  Q5_AI:        22,
-  Q1_OVR:       23,
-  Q2_OVR:       24,
-  Q3_OVR:       25,
-  Q4_OVR:       26,
-  Q5_OVR:       27,
-  YGG1_AI:      28,
-  YGG2_AI:      29,
-  YGG3_AI:      30,
-  YGG1_OVR:     31,
-  YGG2_OVR:     32,
-  YGG3_OVR:     33
+  EMAIL:        4,
+  CLASS:        5,
+  SET:          6,
+  MC_SCORE:     7,
+  OPEN_SCORE:   8,
+  YGG_SCORE:    9,
+  PENALTY:      10,
+  TAB_SWITCHES: 11,
+  TOTAL_SCORE:  12,
+  MAX_SCORE:    13,
+  PERCENTAGE:   14,
+  FINAL_GRADE:  15,
+  BONUS:        16,
+  OPEN_FB:      17,
+  YGG_FB:       18,
+  Q1_AI:        19,
+  Q2_AI:        20,
+  Q3_AI:        21,
+  Q4_AI:        22,
+  Q5_AI:        23,
+  Q1_OVR:       24,
+  Q2_OVR:       25,
+  Q3_OVR:       26,
+  Q4_OVR:       27,
+  Q5_OVR:       28,
+  YGG1_AI:      29,
+  YGG2_AI:      30,
+  YGG3_AI:      31,
+  YGG1_OVR:     32,
+  YGG2_OVR:     33,
+  YGG3_OVR:     34
+};
+
+// Detailed_Answers sheet — 0-based column indices
+var DCOL = {
+  TIMESTAMP:      0,
+  EMAIL:          1,
+  LAST_NAME:      2,
+  FIRST_NAME:     3,
+  CLASS:          4,
+  SET:            5,
+  QUESTION_ID:    6,
+  TYPE:           7,
+  QUESTION_TEXT:  8,
+  STUDENT_ANSWER: 9,
+  CORRECT_ANSWER: 10,
+  IS_CORRECT:     11,
+  AI_SCORE:       12,
+  MAX_SCORE:      13,
+  AI_FEEDBACK:    14
 };
 
 // Hardcoded fallback — overridden at runtime by grade_boundaries_A/B/C in Config sheet
@@ -86,7 +106,6 @@ function parseBoundaryString(str) {
   return result.length ? result : null;
 }
 
-// Reads grade_boundaries_A/B/C from Config sheet; falls back to hardcoded constants.
 function loadEffectiveBoundaries() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var configSheet = ss.getSheetByName(CONFIG_SHEET);
@@ -128,6 +147,8 @@ function doGet(e) {
   var action = (e.parameter && e.parameter.action) ? e.parameter.action : '';
   if (action === 'submissions') { return getSubmissionsResponse(); }
   if (action === 'config')      { return getConfigResponse(); }
+  if (action === 'myresults')   { return getMyResultsResponse(e.parameter.email || ''); }
+  if (action === 'details')     { return getDetailsResponse(e.parameter.timestamp || ''); }
   return getQuestionsResponse();
 }
 
@@ -194,7 +215,7 @@ function getQuestionsResponse() {
 }
 
 // ============================================================
-// GET: CONFIG ONLY  (lightweight - for admin panel)
+// GET: CONFIG ONLY
 // ============================================================
 function getConfigResponse() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -216,17 +237,130 @@ function getConfigResponse() {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function shuffleIndices(arr) {
-  for (var i = arr.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
+// ============================================================
+// GET: MY RESULTS  (student self-lookup by email)
+// ============================================================
+function getMyResultsResponse(email) {
+  if (!email) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'No email provided'}))
+      .setMimeType(ContentService.MimeType.JSON);
   }
+
+  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
+  var det = ss.getSheetByName(DETAILS_SHEET);
+
+  var submissionsData = sub ? sub.getDataRange().getValues() : [];
+  var detailsData     = det ? det.getDataRange().getValues() : [];
+
+  // Collect matching submissions
+  var matchedTimestamps = {};
+  var submissions = [];
+
+  for (var i = 1; i < submissionsData.length; i++) {
+    var row = submissionsData[i];
+    if (String(row[COL.EMAIL - 1]).toLowerCase() !== email.toLowerCase()) { continue; }
+
+    var ts = String(row[COL.TIMESTAMP - 1]);
+    matchedTimestamps[ts] = true;
+
+    submissions.push({
+      timestamp:        ts,
+      firstName:        String(row[COL.FIRST_NAME  - 1]),
+      lastName:         String(row[COL.LAST_NAME   - 1]),
+      class:            String(row[COL.CLASS        - 1]),
+      set:              String(row[COL.SET          - 1]),
+      mcScore:          Number(row[COL.MC_SCORE     - 1]) || 0,
+      openScore:        Number(row[COL.OPEN_SCORE   - 1]) || 0,
+      penalty:          Number(row[COL.PENALTY      - 1]) || 0,
+      totalScore:       Number(row[COL.TOTAL_SCORE  - 1]) || 0,
+      maxScore:         Number(row[COL.MAX_SCORE    - 1]) || 0,
+      percentage:       Number(row[COL.PERCENTAGE   - 1]) || 0,
+      finalGrade:       String(row[COL.FINAL_GRADE  - 1]),
+      bonus:            Number(row[COL.BONUS        - 1]) || 0,
+      details:          []
+    });
+  }
+
+  // Attach detailed answers by timestamp
+  var detailsByTs = {};
+  for (var d = 1; d < detailsData.length; d++) {
+    var dr  = detailsData[d];
+    var dts = String(dr[DCOL.TIMESTAMP]);
+    if (!matchedTimestamps[dts]) { continue; }
+    if (!detailsByTs[dts]) { detailsByTs[dts] = []; }
+    detailsByTs[dts].push({
+      questionId:    String(dr[DCOL.QUESTION_ID]),
+      type:          String(dr[DCOL.TYPE]),
+      questionText:  String(dr[DCOL.QUESTION_TEXT]),
+      studentAnswer: String(dr[DCOL.STUDENT_ANSWER]),
+      correctAnswer: String(dr[DCOL.CORRECT_ANSWER]),
+      isCorrect:     dr[DCOL.IS_CORRECT],
+      aiScore:       Number(dr[DCOL.AI_SCORE])  || 0,
+      maxScore:      Number(dr[DCOL.MAX_SCORE]) || 0,
+      aiFeedback:    String(dr[DCOL.AI_FEEDBACK])
+    });
+  }
+
+  for (var s = 0; s < submissions.length; s++) {
+    submissions[s].details = detailsByTs[submissions[s].timestamp] || [];
+  }
+
+  // Most recent first
+  submissions.sort(function(a, b) {
+    return a.timestamp < b.timestamp ? 1 : -1;
+  });
+
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true, submissions: submissions}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ============================================================
-// GET: SUBMISSIONS  (for admin.html)
+// GET: DETAILS FOR ONE SUBMISSION  (admin modal lazy-load)
+// ============================================================
+function getDetailsResponse(timestamp) {
+  if (!timestamp) {
+    return ContentService
+      .createTextOutput(JSON.stringify({details: []}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DETAILS_SHEET);
+  if (!sheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({details: []}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var data    = sheet.getDataRange().getValues();
+  var details = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[DCOL.TIMESTAMP]) !== String(timestamp)) { continue; }
+    details.push({
+      questionId:    String(row[DCOL.QUESTION_ID]),
+      type:          String(row[DCOL.TYPE]),
+      questionText:  String(row[DCOL.QUESTION_TEXT]),
+      studentAnswer: String(row[DCOL.STUDENT_ANSWER]),
+      correctAnswer: String(row[DCOL.CORRECT_ANSWER]),
+      isCorrect:     row[DCOL.IS_CORRECT],
+      aiScore:       Number(row[DCOL.AI_SCORE])  || 0,
+      maxScore:      Number(row[DCOL.MAX_SCORE]) || 0,
+      aiFeedback:    String(row[DCOL.AI_FEEDBACK])
+    });
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({details: details}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// GET: SUBMISSIONS  (admin panel)
 // ============================================================
 function getSubmissionsResponse() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -248,7 +382,7 @@ function getSubmissionsResponse() {
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
 
-    var q1ai = row[COL.Q1_AI - 1];
+    var q1ai    = row[COL.Q1_AI - 1];
     var hasPerQ = (q1ai !== '' && q1ai !== null && q1ai !== undefined);
 
     var qScores = [];
@@ -283,6 +417,7 @@ function getSubmissionsResponse() {
       timestamp:          String(row[COL.TIMESTAMP  - 1]),
       firstName:          String(row[COL.FIRST_NAME - 1]),
       lastName:           String(row[COL.LAST_NAME  - 1]),
+      email:              String(row[COL.EMAIL       - 1]),
       class:              String(row[COL.CLASS       - 1]),
       set:                String(row[COL.SET         - 1]),
       mcScore:            Number(row[COL.MC_SCORE    - 1]) || 0,
@@ -304,6 +439,15 @@ function getSubmissionsResponse() {
   return ContentService
     .createTextOutput(JSON.stringify({submissions: submissions}))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function shuffleIndices(arr) {
+  for (var i = arr.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
 }
 
 // ============================================================
@@ -391,6 +535,7 @@ function handleSubmission(data) {
     timestamp:    timestamp,
     firstName:    data.firstName,
     lastName:     data.lastName,
+    email:        data.email || '',
     studentClass: data.class,
     set:          set,
     mcScore:      mcScore,
@@ -409,6 +554,20 @@ function handleSubmission(data) {
     yggAIScores:  yggAIScores
   });
 
+  writeDetailedAnswers({
+    timestamp:    timestamp,
+    email:        data.email || '',
+    firstName:    data.firstName,
+    lastName:     data.lastName,
+    studentClass: data.class,
+    set:          set,
+    mcAnswers:    mcAnswers,
+    openEnded:    openEnded,
+    openFeedback: openFeedback,
+    yggAnswers:   yggAnswers,
+    yggFeedback:  yggFeedback
+  });
+
   return ContentService
     .createTextOutput(JSON.stringify({
       success:    true,
@@ -425,6 +584,80 @@ function handleSubmission(data) {
       yggFeedback:  yggFeedback
     }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// WRITE DETAILED ANSWERS  (one row per question)
+// ============================================================
+function writeDetailedAnswers(d) {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DETAILS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(DETAILS_SHEET);
+    sheet.appendRow([
+      'Timestamp','Email','Last Name','First Name','Class','Set',
+      'Question_ID','Type','Question_Text','Student_Answer',
+      'Correct_Answer','Is_Correct','AI_Score','Max_Score','AI_Feedback'
+    ]);
+  }
+
+  var base = [d.timestamp, d.email, d.lastName, d.firstName, d.studentClass, d.set];
+
+  var mcAnswers = d.mcAnswers || [];
+  for (var i = 0; i < mcAnswers.length; i++) {
+    var mc = mcAnswers[i];
+    sheet.appendRow(base.concat([
+      mc.questionId,
+      'mc',
+      mc.questionText  || '',
+      mc.selectedText  || 'No answer',
+      mc.correctText   || '',
+      mc.correct ? 'TRUE' : 'FALSE',
+      mc.correct ? mc.points : 0,
+      mc.points,
+      mc.correct ? 'Correct' : ('Incorrect. Correct answer: ' + (mc.correctText || ''))
+    ]));
+  }
+
+  var openEnded    = d.openEnded    || [];
+  var openFeedback = d.openFeedback || [];
+  for (var j = 0; j < openEnded.length; j++) {
+    var oe = openEnded[j];
+    var fb = null;
+    for (var fi = 0; fi < openFeedback.length; fi++) {
+      if (openFeedback[fi].questionId === oe.questionId) { fb = openFeedback[fi]; break; }
+    }
+    sheet.appendRow(base.concat([
+      oe.questionId,
+      'openEnded',
+      oe.questionText || '',
+      oe.text         || 'No answer',
+      '', '',
+      fb ? fb.score : 0,
+      oe.points,
+      fb ? fb.feedback : ''
+    ]));
+  }
+
+  var yggAnswers  = d.yggAnswers  || [];
+  var yggFeedback = d.yggFeedback || [];
+  for (var k = 0; k < yggAnswers.length; k++) {
+    var yq  = yggAnswers[k];
+    var yfb = null;
+    for (var yi = 0; yi < yggFeedback.length; yi++) {
+      if (yggFeedback[yi].questionId === yq.questionId) { yfb = yggFeedback[yi]; break; }
+    }
+    sheet.appendRow(base.concat([
+      yq.questionId,
+      'yggdrasil',
+      yq.questionText || '',
+      yq.text         || 'Not attempted',
+      '', '',
+      yfb ? yfb.score : 0,
+      yq.points,
+      yfb ? yfb.feedback : 'Not attempted'
+    ]));
+  }
 }
 
 // ============================================================
@@ -492,7 +725,7 @@ function callGeminiAPI(prompt) {
 }
 
 // ============================================================
-// WRITE SUBMISSION TO SHEET
+// WRITE SUBMISSION SUMMARY TO SHEET
 // ============================================================
 function writeSummaryToSheet(d) {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -501,7 +734,7 @@ function writeSummaryToSheet(d) {
 
   if (sheet.getLastRow() === 0) {
     sheet.appendRow([
-      'Timestamp','First Name','Last Name','Class','Set',
+      'Timestamp','First Name','Last Name','Email','Class','Set',
       'MC Score','Open Score','Ygg Score',
       'Penalty','Tab Switches','Total Score','Max Score','Percentage','Final Grade','Bonus',
       'Open Feedback','Ygg Feedback',
@@ -512,12 +745,13 @@ function writeSummaryToSheet(d) {
     ]);
   }
 
-  var row = new Array(33);
-  for (var x = 0; x < 33; x++) { row[x] = ''; }
+  var row = new Array(34);
+  for (var x = 0; x < 34; x++) { row[x] = ''; }
 
   row[COL.TIMESTAMP    - 1] = d.timestamp;
   row[COL.FIRST_NAME   - 1] = d.firstName;
   row[COL.LAST_NAME    - 1] = d.lastName;
+  row[COL.EMAIL        - 1] = d.email;
   row[COL.CLASS        - 1] = d.studentClass;
   row[COL.SET          - 1] = d.set;
   row[COL.MC_SCORE     - 1] = d.mcScore;
@@ -546,7 +780,7 @@ function writeSummaryToSheet(d) {
 }
 
 // ============================================================
-// HANDLE OVERRIDE (from admin.html)
+// HANDLE OVERRIDE  (from admin.html)
 // ============================================================
 function handleOverride(data) {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -606,7 +840,7 @@ function handleOverride(data) {
 }
 
 // ============================================================
-// HANDLE CONFIG UPDATE  (from admin.html)
+// HANDLE CONFIG UPDATE
 // ============================================================
 function handleUpdateConfig(data) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -635,7 +869,7 @@ function handleUpdateConfig(data) {
 }
 
 // ============================================================
-// SHARED RECALCULATION HELPER
+// RECALCULATION HELPER
 // ============================================================
 function recalcRow(row, boundaries) {
   var set      = String(row[COL.SET - 1]);
@@ -698,7 +932,7 @@ function calculateGrade(percentage, set, boundaries) {
 }
 
 // ============================================================
-// MENU ACTION: RECALCULATE ALL ROWS
+// MENU: RECALCULATE ALL ROWS
 // ============================================================
 function recalculateWithOverrides() {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -730,7 +964,7 @@ function recalculateWithOverrides() {
 }
 
 // ============================================================
-// MENU ACTION: BACKFILL AI SCORES FOR OLD ROWS
+// MENU: BACKFILL AI SCORES
 // ============================================================
 function backfillAIScores() {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -783,45 +1017,31 @@ function backfillAIScores() {
 }
 
 // ============================================================
-// MANUAL SETUP
+// SETUP
 // ============================================================
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss.getSheetByName(CONFIG_SHEET)) {
-    createConfigSheet(ss);
-    console.log('Config sheet created.');
-  } else {
-    console.log('Config sheet already exists - skipped.');
-  }
-  if (!ss.getSheetByName(QUESTIONS_SHEET)) {
-    createQuestionsSheet(ss);
-    console.log('Questions sheet created.');
-  } else {
-    console.log('Questions sheet already exists - skipped.');
-  }
+  if (!ss.getSheetByName(CONFIG_SHEET))    { createConfigSheet(ss);    console.log('Config sheet created.'); }
+  else                                      { console.log('Config sheet already exists.'); }
+  if (!ss.getSheetByName(QUESTIONS_SHEET)) { createQuestionsSheet(ss); console.log('Questions sheet created.'); }
+  else                                      { console.log('Questions sheet already exists.'); }
   console.log('Setup complete.');
 }
 
-// ============================================================
-// AUTO-CREATE: CONFIG SHEET
-// ============================================================
 function createConfigSheet(ss) {
   if (!ss) { ss = SpreadsheetApp.getActiveSpreadsheet(); }
   var sheet = ss.insertSheet(CONFIG_SHEET);
-  sheet.appendRow(['exam_title',              'Exam']);
-  sheet.appendRow(['exam_subtitle',           'Select your question set to begin.']);
-  sheet.appendRow(['class_options',           '10A,10B,10C']);
-  sheet.appendRow(['exam_duration_minutes',   '60']);
-  sheet.appendRow(['exam_active',             'true']);
-  sheet.appendRow(['grade_boundaries_A',      '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
-  sheet.appendRow(['grade_boundaries_B',      '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
-  sheet.appendRow(['grade_boundaries_C',      '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
+  sheet.appendRow(['exam_title',            'Exam']);
+  sheet.appendRow(['exam_subtitle',         'Select your question set to begin.']);
+  sheet.appendRow(['class_options',         '10A,10B,10C']);
+  sheet.appendRow(['exam_duration_minutes', '60']);
+  sheet.appendRow(['exam_active',           'true']);
+  sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
+  sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
+  sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
   return sheet;
 }
 
-// ============================================================
-// AUTO-CREATE: QUESTIONS SHEET  (sample questions)
-// ============================================================
 function createQuestionsSheet(ss) {
   if (!ss) { ss = SpreadsheetApp.getActiveSpreadsheet(); }
   var sheet = ss.insertSheet(QUESTIONS_SHEET);
