@@ -5,7 +5,7 @@
 // then deploy as a new Web App version (Anyone can access).
 // ============================================================
 
-var GEMINI_API_KEY    = 'PASTE_YOUR_KEY_HERE';
+var GEMINI_API_KEY    = 'AIzaSyB5FAbnmB6h25aW85OwAr2MTM2DYIAOI6U';
 var GOOGLE_CLIENT_ID  = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 var SUBMISSIONS_SHEET = 'Submissions';
 var DETAILS_SHEET     = 'Detailed_Answers';
@@ -116,6 +116,15 @@ function loadEffectiveBoundaries() {
     result[sets[si]] = parsed || GRADE_BOUNDARIES[sets[si]];
   }
   return result;
+}
+
+// ============================================================
+// SAFE JSON — escapes non-ASCII to \uXXXX so encoding never matters
+// ============================================================
+function safeJson(obj) {
+  return JSON.stringify(obj).replace(/[^\x00-\x7F]/g, function(c) {
+    return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+  });
 }
 
 // ============================================================
@@ -251,20 +260,20 @@ function getQuestionsResponse() {
     }
   }
 
-  // Question bank: randomly sample if configured
-  var questionsPerSet  = parseInt(config['questions_per_set'] || '0', 10);
-  var randomizeBank    = (config['randomize_questions'] || 'false').toLowerCase() === 'true';
-  if (randomizeBank && questionsPerSet > 0) {
-    ['A', 'B', 'C'].forEach(function(s) {
-      if (questions[s].length > questionsPerSet) {
-        for (var i = questions[s].length - 1; i > 0; i--) {
-          var j = Math.floor(Math.random() * (i + 1));
-          var tmp = questions[s][i]; questions[s][i] = questions[s][j]; questions[s][j] = tmp;
-        }
-        questions[s] = questions[s].slice(0, questionsPerSet);
+  // Question bank sampling — randomize and/or limit independently
+  var questionsPerSet = parseInt(config['questions_per_set'] || '0', 10);
+  var randomizeBank   = (config['randomize_questions'] || 'false').toLowerCase() === 'true';
+  ['A', 'B', 'C'].forEach(function(s) {
+    if (randomizeBank) {
+      for (var i = questions[s].length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = questions[s][i]; questions[s][i] = questions[s][j]; questions[s][j] = tmp;
       }
-    });
-  }
+    }
+    if (questionsPerSet > 0 && questions[s].length > questionsPerSet) {
+      questions[s] = questions[s].slice(0, questionsPerSet);
+    }
+  });
 
   // Strip admin_password before sending to students
   var safeConfig = {};
@@ -378,7 +387,7 @@ function getMyResultsResponse(email) {
   });
 
   return ContentService
-    .createTextOutput(JSON.stringify({success: true, submissions: submissions}))
+    .createTextOutput(safeJson({success: true, submissions: submissions}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -388,7 +397,7 @@ function getMyResultsResponse(email) {
 function getDetailsResponse(timestamp) {
   if (!timestamp) {
     return ContentService
-      .createTextOutput(JSON.stringify({details: []}))
+      .createTextOutput(safeJson({details: []}))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -396,7 +405,7 @@ function getDetailsResponse(timestamp) {
   var sheet = ss.getSheetByName(DETAILS_SHEET);
   if (!sheet) {
     return ContentService
-      .createTextOutput(JSON.stringify({details: []}))
+      .createTextOutput(safeJson({details: []}))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -420,7 +429,7 @@ function getDetailsResponse(timestamp) {
   }
 
   return ContentService
-    .createTextOutput(JSON.stringify({details: details}))
+    .createTextOutput(safeJson({details: details}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -432,7 +441,7 @@ function getSubmissionsResponse() {
   var sheet = ss.getSheetByName(SUBMISSIONS_SHEET);
   if (!sheet) {
     return ContentService
-      .createTextOutput(JSON.stringify({submissions: []}))
+      .createTextOutput(safeJson({submissions: []}))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -487,7 +496,7 @@ function getSubmissionsResponse() {
   }
 
   return ContentService
-    .createTextOutput(JSON.stringify({submissions: submissions}))
+    .createTextOutput(safeJson({submissions: submissions}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -687,7 +696,7 @@ function handleSubmission(data) {
   }
 
   return ContentService
-    .createTextOutput(JSON.stringify({
+    .createTextOutput(safeJson({
       success:      true,
       firstName:    data.firstName,
       lastName:     data.lastName,
@@ -1108,7 +1117,7 @@ function getAdminQuestionsResponse() {
   var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
   if (!qSheet) {
     return ContentService
-      .createTextOutput(JSON.stringify({questions: []}))
+      .createTextOutput(safeJson({questions: []}))
       .setMimeType(ContentService.MimeType.JSON);
   }
   var rows = qSheet.getDataRange().getValues();
@@ -1134,7 +1143,7 @@ function getAdminQuestionsResponse() {
     });
   }
   return ContentService
-    .createTextOutput(JSON.stringify({questions: questions}))
+    .createTextOutput(safeJson({questions: questions}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
