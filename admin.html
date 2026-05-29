@@ -192,6 +192,102 @@
 
         button.btn-close { background: var(--border); color: var(--text); }
         button.btn-close:hover { background: #CBD5E1; }
+
+        /* Config panel */
+        .config-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .config-header:hover { background: #F0F7FF; }
+        .config-header h3 { font-size: 14px; color: var(--primary); font-weight: 600; }
+
+        .config-body {
+            display: none;
+            padding: 0 20px 20px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .config-body.open { display: block; }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .config-field label {
+            display: block;
+            font-size: 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .config-field input[type="text"],
+        .config-field input[type="number"] {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            background: var(--bg);
+        }
+
+        .config-field input:focus { outline: none; border-color: var(--primary); }
+
+        .toggle-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+
+        .toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #CBD5E1;
+            border-radius: 24px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .toggle-slider:before {
+            content: '';
+            position: absolute;
+            width: 18px; height: 18px;
+            left: 3px; top: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+
+        .toggle input:checked + .toggle-slider { background: var(--secondary); }
+        .toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+
+        .toggle-label { font-size: 14px; font-weight: 600; }
+        .toggle-label.on  { color: var(--secondary); }
+        .toggle-label.off { color: var(--muted); }
+
+        .btn-save { background: var(--primary); color: white; margin-top: 20px; }
+        .btn-save:hover { background: #163d5e; }
+        .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .save-status { font-size: 13px; margin-top: 10px; display: none; }
+        .save-status.success { color: var(--secondary); display: block; }
+        .save-status.error   { color: var(--error);     display: block; }
     </style>
 </head>
 
@@ -224,6 +320,45 @@
     <div class="container">
 
         <div class="stats-row" id="statsRow"></div>
+
+        <div class="config-panel">
+            <div class="config-header" onclick="toggleConfig()">
+                <h3>⚙ Exam Settings</h3>
+                <span id="configChevron" style="color:var(--muted);">▼</span>
+            </div>
+            <div class="config-body" id="configBody">
+                <div class="config-grid">
+                    <div class="config-field" style="grid-column: 1 / -1;">
+                        <label>Exam Active</label>
+                        <div class="toggle-wrap">
+                            <label class="toggle">
+                                <input type="checkbox" id="cfgActive" onchange="updateActiveLabel()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label off" id="activeLabel">Off</span>
+                        </div>
+                    </div>
+                    <div class="config-field">
+                        <label>Exam Title</label>
+                        <input type="text" id="cfgTitle" placeholder="e.g. Smart Vertical Garden">
+                    </div>
+                    <div class="config-field">
+                        <label>Subtitle</label>
+                        <input type="text" id="cfgSubtitle" placeholder="e.g. Select your question set">
+                    </div>
+                    <div class="config-field">
+                        <label>Duration (minutes)</label>
+                        <input type="number" id="cfgDuration" min="1" max="180">
+                    </div>
+                    <div class="config-field">
+                        <label>Class Options (comma-separated)</label>
+                        <input type="text" id="cfgClasses" placeholder="e.g. 10A,10B,10C">
+                    </div>
+                </div>
+                <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
+                <p class="save-status" id="saveStatus"></p>
+            </div>
+        </div>
 
         <div class="toolbar">
             <label>Filter by class:</label>
@@ -282,6 +417,7 @@
     const appsScriptUrl = params.get('src') || '';
 
     var allSubmissions = [];
+    var currentConfig = {};
     var sortKey = 'lastName';
     var sortAsc = true;
 
@@ -322,6 +458,8 @@
     }
 
     function applyConfig(config) {
+        currentConfig = config;
+
         if (config.exam_title) {
             document.getElementById('adminTitle').textContent = config.exam_title + ' — Admin';
             document.title = config.exam_title + ' Admin';
@@ -329,6 +467,78 @@
         if (config.exam_subtitle) {
             document.getElementById('adminSubtitle').textContent = config.exam_subtitle;
         }
+
+        // Populate config fields
+        document.getElementById('cfgTitle').value    = config.exam_title    || '';
+        document.getElementById('cfgSubtitle').value = config.exam_subtitle || '';
+        document.getElementById('cfgDuration').value = config.exam_duration_minutes || '';
+        document.getElementById('cfgClasses').value  = config.class_options  || '';
+
+        var active = config.exam_active === 'true' || config.exam_active === true;
+        document.getElementById('cfgActive').checked = active;
+        updateActiveLabel();
+    }
+
+    function toggleConfig() {
+        var body    = document.getElementById('configBody');
+        var chevron = document.getElementById('configChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+    }
+
+    function updateActiveLabel() {
+        var on  = document.getElementById('cfgActive').checked;
+        var lbl = document.getElementById('activeLabel');
+        lbl.textContent = on ? 'On' : 'Off';
+        lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
+    }
+
+    function saveConfig() {
+        var btn    = document.querySelector('.btn-save');
+        var status = document.getElementById('saveStatus');
+
+        var updates = {
+            exam_active:            document.getElementById('cfgActive').checked ? 'true' : 'false',
+            exam_title:             document.getElementById('cfgTitle').value.trim(),
+            exam_subtitle:          document.getElementById('cfgSubtitle').value.trim(),
+            exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
+            class_options:          document.getElementById('cfgClasses').value.trim()
+        };
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        status.className = 'save-status';
+        status.textContent = '';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'updateConfig', updates: updates })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                status.className = 'save-status success';
+                status.textContent = 'Settings saved.';
+                // Reflect title changes immediately
+                if (updates.exam_title) {
+                    document.getElementById('adminTitle').textContent = updates.exam_title + ' — Admin';
+                    document.title = updates.exam_title + ' Admin';
+                }
+                if (updates.exam_subtitle) {
+                    document.getElementById('adminSubtitle').textContent = updates.exam_subtitle;
+                }
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(function(err) {
+            status.className = 'save-status error';
+            status.textContent = 'Save failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Save Settings';
+        });
     }
 
     function buildClassFilter() {
