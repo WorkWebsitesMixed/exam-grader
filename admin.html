@@ -194,6 +194,18 @@
         button.btn-delete { background: var(--error); color: white; }
         button.btn-delete:hover { background: #c0392b; }
 
+        /* Boundary tabs */
+        .boundary-tab {
+            padding: 5px 16px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--muted);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .boundary-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
+
         /* Config panel */
         .config-panel {
             background: var(--surface);
@@ -391,6 +403,27 @@
 
         <div class="stats-row" id="statsRow"></div>
 
+        <div class="config-panel" id="chartPanel" style="display:none; margin-bottom:24px;">
+            <div class="config-header" onclick="toggleChart()">
+                <h3>📊 Score Distribution</h3>
+                <span id="chartChevron" style="color:var(--muted);">▲</span>
+            </div>
+            <div class="config-body open" id="chartBody" style="padding:16px 20px 20px;">
+                <div id="chartLegend" style="display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:12px;"></div>
+                <canvas id="gradeChart" style="display:block;"></canvas>
+            </div>
+        </div>
+
+        <div class="config-panel" id="analysisPanel" style="display:none; margin-bottom:24px;">
+            <div class="config-header" onclick="toggleAnalysis()">
+                <h3>🎓 Class Analysis</h3>
+                <span id="analysisChevron" style="color:var(--muted);">▲</span>
+            </div>
+            <div class="config-body open" id="analysisBody">
+                <div id="analysisContent"></div>
+            </div>
+        </div>
+
         <div class="config-panel">
             <div class="config-header" onclick="toggleConfig()">
                 <h3>⚙ Exam Settings</h3>
@@ -426,11 +459,73 @@
                     </div>
                     <div class="config-field">
                         <label>Admin Password</label>
-                        <input type="password" id="cfgPassword" placeholder="Leave blank for no password" autocomplete="new-password">
+                        <input type="password" id="cfgPassword" placeholder="New password (blank = keep current)" autocomplete="new-password">
+                    </div>
+                    <div class="config-field">
+                        <label>Randomize from Question Bank</label>
+                        <div class="toggle-wrap">
+                            <label class="toggle">
+                                <input type="checkbox" id="cfgRandomize" onchange="updateRandomizeLabel()">
+                                <span class="slider"></span>
+                            </label>
+                            <span id="randomizeLabel" class="toggle-label off">Off</span>
+                        </div>
+                    </div>
+                    <div class="config-field">
+                        <label>Questions per Set (0 = all)</label>
+                        <input type="number" id="cfgQPerSet" min="0" placeholder="0" style="width:100px;">
                     </div>
                 </div>
-                <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+                    <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
+                    <button class="btn" id="recalcBtn" onclick="recalcGrades()"
+                        style="background:#F39C12; color:white; border:none;"
+                        title="Recalculates open-ended scores, totals, percentages and grades for all submissions using current grade boundaries and any overrides.">
+                        Recalculate All Grades
+                    </button>
+                    <p id="recalcStatus" style="font-size:13px; margin:0;"></p>
+                </div>
                 <p class="save-status" id="saveStatus"></p>
+            </div>
+        </div>
+
+        <div class="config-panel" id="boundaryPanel" style="margin-bottom:24px;">
+            <div class="config-header" onclick="toggleBoundaries()">
+                <h3>📐 Grade Boundaries</h3>
+                <span id="boundaryChevron" style="color:var(--muted);">▼</span>
+            </div>
+            <div class="config-body" id="boundaryBody">
+                <div style="display:flex; gap:8px; margin-bottom:16px;">
+                    <button id="tab-A" class="boundary-tab active" onclick="showBoundarySet('A')">Set A</button>
+                    <button id="tab-B" class="boundary-tab" onclick="showBoundarySet('B')">Set B</button>
+                    <button id="tab-C" class="boundary-tab" onclick="showBoundarySet('C')">Set C</button>
+                </div>
+                <div id="boundary-editor-A"></div>
+                <div id="boundary-editor-B" style="display:none;"></div>
+                <div id="boundary-editor-C" style="display:none;"></div>
+                <div style="margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <button class="btn btn-save" onclick="saveBoundaries()">Save Boundaries</button>
+                    <p id="boundaryStatus" style="font-size:13px; margin:0;"></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="config-panel" id="questionsPanel" style="margin-bottom:24px;">
+            <div class="config-header" onclick="toggleQuestions()">
+                <h3>📝 Questions</h3>
+                <span id="questionsChevron" style="color:var(--muted);">▼</span>
+            </div>
+            <div class="config-body" id="questionsBody">
+                <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+                    <button id="qtab-A" class="boundary-tab active" onclick="showQSet('A')">Set A</button>
+                    <button id="qtab-B" class="boundary-tab" onclick="showQSet('B')">Set B</button>
+                    <button id="qtab-C" class="boundary-tab" onclick="showQSet('C')">Set C</button>
+                    <button class="btn btn-save" onclick="openAddQuestion()" style="margin-left:auto;">+ Add Question</button>
+                </div>
+                <div id="qlist-A"></div>
+                <div id="qlist-B" style="display:none;"></div>
+                <div id="qlist-C" style="display:none;"></div>
+                <p id="questionsLoadMsg" style="color:var(--muted); font-size:13px;">Open this panel to load questions.</p>
             </div>
         </div>
 
@@ -450,6 +545,8 @@
 
             <label>Search name:</label>
             <input type="text" id="nameSearch" placeholder="Last name..." oninput="renderTable()" style="min-width:160px;">
+
+            <button class="btn btn-save" onclick="exportCSV()" style="margin-left:auto;">Export CSV</button>
         </div>
 
         <div class="table-wrap">
@@ -471,6 +568,51 @@
         </div>
 
         <p id="rowCount" style="margin-top:12px; font-size:13px; color:var(--muted);"></p>
+    </div>
+</div>
+
+<!-- QUESTION EDITOR MODAL -->
+<div id="questionModal" class="modal">
+    <div class="modal-box" style="max-width:600px;">
+        <h2 id="qModalTitle">Add Question</h2>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
+            <div>
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Set</label>
+                <select id="qSet" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Type</label>
+                <select id="qType" onchange="toggleQType()" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                    <option value="mc">Multiple Choice</option>
+                    <option value="openEnded">Open-Ended</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Points</label>
+                <input type="number" id="qPoints" min="1" value="1" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+            </div>
+        </div>
+        <div style="margin-bottom:14px;">
+            <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Question Text</label>
+            <textarea id="qText" rows="3" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; resize:vertical;"></textarea>
+        </div>
+        <div id="qMcSection">
+            <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:8px;">Options (select correct answer)</label>
+            <div id="qOptions"></div>
+        </div>
+        <div id="qOeSection" style="display:none;">
+            <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Grading Rubric</label>
+            <textarea id="qRubric" rows="3" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; resize:vertical;" placeholder="Describe what a full-marks answer should include..."></textarea>
+        </div>
+        <p id="qModalError" style="color:var(--error); font-size:13px; margin-top:10px; display:none;"></p>
+        <div class="modal-footer">
+            <button class="btn btn-close" onclick="closeQuestionModal()">Cancel</button>
+            <button class="btn btn-save" onclick="saveQuestion()" style="margin-left:10px;">Save Question</button>
+        </div>
     </div>
 </div>
 
@@ -506,32 +648,46 @@
 
     var pendingSubData = null;
     var pendingCfgData = null;
+    var adminSessionKey = 'admin_pw_' + appsScriptUrl.slice(-20);
+
+    function getStoredAdminPassword() {
+        return sessionStorage.getItem(adminSessionKey) || '';
+    }
 
     function loadData() {
-        Promise.all([
-            fetch(appsScriptUrl + '?action=submissions').then(function(r) { return r.json(); }),
-            fetch(appsScriptUrl + '?action=config').then(function(r) { return r.json(); })
-        ])
-        .then(function(results) {
-            pendingSubData = results[0];
-            pendingCfgData = results[1];
-
-            document.getElementById('loadingScreen').style.display = 'none';
-
-            if (!pendingSubData.submissions) { throw new Error('Unexpected response from server.'); }
-
-            var password = (pendingCfgData.config || {}).admin_password || '';
-            if (password) {
-                var sessionKey = 'admin_auth_' + appsScriptUrl.slice(-20);
-                if (sessionStorage.getItem(sessionKey) === btoa(password)) {
-                    renderApp();
-                } else {
+        document.getElementById('loadingScreen').style.display = 'block';
+        fetch(appsScriptUrl + '?action=config')
+            .then(function(r) { return r.json(); })
+            .then(function(cfgData) {
+                pendingCfgData = cfgData;
+                var passwordRequired = (cfgData.config || {}).admin_password_required === 'true';
+                if (passwordRequired && !getStoredAdminPassword()) {
+                    document.getElementById('loadingScreen').style.display = 'none';
                     document.getElementById('passwordScreen').style.display = 'flex';
                     document.getElementById('passwordInput').focus();
+                } else {
+                    loadSubmissions();
                 }
-            } else {
-                renderApp();
-            }
+            })
+            .catch(function(err) {
+                document.getElementById('loadingScreen').style.display = 'none';
+                document.getElementById('errorMsg').textContent = err.message;
+                document.getElementById('errorScreen').style.display = 'block';
+            });
+    }
+
+    function loadSubmissions() {
+        document.getElementById('loadingScreen').style.display = 'block';
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'submissions', adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(subData) {
+            document.getElementById('loadingScreen').style.display = 'none';
+            if (!subData.submissions) { throw new Error('Unexpected response from server.'); }
+            pendingSubData = subData;
+            renderApp();
         })
         .catch(function(err) {
             document.getElementById('loadingScreen').style.display = 'none';
@@ -542,18 +698,35 @@
 
     function submitPassword(e) {
         e.preventDefault();
-        var entered  = document.getElementById('passwordInput').value;
-        var password = (pendingCfgData.config || {}).admin_password || '';
-        if (entered === password) {
-            var sessionKey = 'admin_auth_' + appsScriptUrl.slice(-20);
-            sessionStorage.setItem(sessionKey, btoa(password));
-            document.getElementById('passwordScreen').style.display = 'none';
-            renderApp();
-        } else {
+        var entered = document.getElementById('passwordInput').value;
+        var btn = document.querySelector('#passwordForm button');
+        btn.disabled = true;
+        btn.textContent = 'Verifying...';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'verifyAdmin', password: entered })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                sessionStorage.setItem(adminSessionKey, entered);
+                document.getElementById('passwordScreen').style.display = 'none';
+                loadSubmissions();
+            } else {
+                document.getElementById('passwordError').style.display = 'block';
+                document.getElementById('passwordInput').value = '';
+                document.getElementById('passwordInput').focus();
+            }
+        })
+        .catch(function() {
+            document.getElementById('passwordError').textContent = 'Could not reach server. Try again.';
             document.getElementById('passwordError').style.display = 'block';
-            document.getElementById('passwordInput').value = '';
-            document.getElementById('passwordInput').focus();
-        }
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Enter';
+        });
     }
 
     function renderApp() {
@@ -581,7 +754,13 @@
         document.getElementById('cfgSubtitle').value = config.exam_subtitle || '';
         document.getElementById('cfgDuration').value = config.exam_duration_minutes || '';
         document.getElementById('cfgClasses').value   = config.class_options   || '';
-        document.getElementById('cfgPassword').value  = config.admin_password  || '';
+        document.getElementById('cfgPassword').value  = '';  // never pre-filled
+        document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
+        document.getElementById('cfgQPerSet').value   = config.questions_per_set || '0';
+
+        ['A', 'B', 'C'].forEach(function(s) {
+            renderBoundaryEditor(s, config['grade_boundaries_' + s] || '');
+        });
 
         var active = config.exam_active === 'true' || config.exam_active === true;
         document.getElementById('cfgActive').checked = active;
@@ -602,6 +781,365 @@
         lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
     }
 
+    function updateRandomizeLabel() {
+        var on  = document.getElementById('cfgRandomize').checked;
+        var lbl = document.getElementById('randomizeLabel');
+        lbl.textContent = on ? 'On' : 'Off';
+        lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
+    }
+
+    // --- GRADE BOUNDARY EDITOR ---
+    function toggleBoundaries() {
+        var body    = document.getElementById('boundaryBody');
+        var chevron = document.getElementById('boundaryChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+    }
+
+    function showBoundarySet(setLetter) {
+        ['A', 'B', 'C'].forEach(function(s) {
+            document.getElementById('boundary-editor-' + s).style.display = s === setLetter ? '' : 'none';
+            var tab = document.getElementById('tab-' + s);
+            tab.classList.toggle('active', s === setLetter);
+        });
+    }
+
+    function parseBoundaryStr(str) {
+        var rows = [];
+        (str || '').split(',').forEach(function(pair) {
+            var parts = pair.trim().split(':');
+            if (parts.length === 2 && parts[0].trim() && parts[1].trim() !== '') {
+                rows.push({ grade: parts[0].trim(), min: parseInt(parts[1].trim(), 10) });
+            }
+        });
+        return rows;
+    }
+
+    function renderBoundaryEditor(setLetter, boundaryStr) {
+        var container = document.getElementById('boundary-editor-' + setLetter);
+        if (!container) return;
+        container.innerHTML = '';
+
+        var rows = parseBoundaryStr(boundaryStr);
+
+        var table = document.createElement('table');
+        table.style.cssText = 'border-collapse:collapse; font-size:13px; min-width:280px;';
+
+        var thead = document.createElement('thead');
+        thead.innerHTML = '<tr>' +
+            '<th style="text-align:left; padding:6px 10px; color:var(--muted); font-size:11px; text-transform:uppercase; border-bottom:2px solid var(--border);">Grade</th>' +
+            '<th style="text-align:left; padding:6px 10px; color:var(--muted); font-size:11px; text-transform:uppercase; border-bottom:2px solid var(--border);">Min %</th>' +
+            '<th style="border-bottom:2px solid var(--border);"></th></tr>';
+        table.appendChild(thead);
+
+        var tbody = document.createElement('tbody');
+        tbody.id = 'boundary-tbody-' + setLetter;
+        rows.forEach(function(row) {
+            tbody.appendChild(makeBoundaryRow(row.grade, String(row.min)));
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+
+        var addBtn = document.createElement('button');
+        addBtn.textContent = '+ Add row';
+        addBtn.style.cssText = 'margin-top:10px; font-size:12px; color:var(--primary); background:none; border:none; cursor:pointer; padding:4px 0; display:block;';
+        addBtn.onclick = function() {
+            document.getElementById('boundary-tbody-' + setLetter).appendChild(makeBoundaryRow('', ''));
+        };
+        container.appendChild(addBtn);
+
+        var hint = document.createElement('p');
+        hint.style.cssText = 'font-size:11px; color:var(--muted); margin-top:8px; line-height:1.5;';
+        hint.textContent = 'Rows must be in descending order by Min %. The last row must have Min % = 0.';
+        container.appendChild(hint);
+    }
+
+    function makeBoundaryRow(grade, min) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td style="padding:4px 6px;">' +
+            '<input type="text" value="' + escapeHtml(grade) + '" placeholder="e.g. 3.3" ' +
+            'style="width:64px; padding:4px 6px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></td>' +
+            '<td style="padding:4px 6px;">' +
+            '<input type="number" value="' + escapeHtml(min) + '" min="0" max="100" placeholder="0–100" ' +
+            'style="width:64px; padding:4px 6px; border:1px solid var(--border); border-radius:4px; font-size:13px;"></td>' +
+            '<td style="padding:4px 6px;">' +
+            '<button onclick="this.closest(\'tr\').remove()" ' +
+            'style="color:var(--error); background:none; border:none; cursor:pointer; font-size:18px; line-height:1;">×</button></td>';
+        return tr;
+    }
+
+    function serializeBoundaries(setLetter) {
+        var tbody = document.getElementById('boundary-tbody-' + setLetter);
+        if (!tbody) return null;
+        var pairs = [];
+        var lastMin = Infinity;
+        var valid = true;
+
+        tbody.querySelectorAll('tr').forEach(function(tr) {
+            var inputs = tr.querySelectorAll('input');
+            if (inputs.length < 2) return;
+            var grade = inputs[0].value.trim();
+            var min   = parseInt(inputs[1].value, 10);
+            if (!grade || isNaN(min) || min < 0 || min > 100) { valid = false; return; }
+            if (min >= lastMin) { valid = false; return; }
+            lastMin = min;
+            pairs.push(grade + ':' + min);
+            inputs[0].style.borderColor = '';
+            inputs[1].style.borderColor = '';
+        });
+
+        if (!valid || pairs.length === 0) return null;
+        if (lastMin !== 0) return null; // last row must be 0
+        return pairs.join(',');
+    }
+
+    function saveBoundaries() {
+        var status = document.getElementById('boundaryStatus');
+        var updates = {};
+        var errorSet = null;
+
+        ['A', 'B', 'C'].forEach(function(s) {
+            if (errorSet) return;
+            var str = serializeBoundaries(s);
+            if (str === null) { errorSet = s; return; }
+            updates['grade_boundaries_' + s] = str;
+        });
+
+        if (errorSet) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Set ' + errorSet + ': rows must be in strictly descending order, last row must be 0%.';
+            showBoundarySet(errorSet);
+            return;
+        }
+
+        var btn = document.querySelector('#boundaryBody .btn-save');
+        btn.disabled = true; btn.textContent = 'Saving...';
+        status.textContent = '';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'updateConfig', updates: updates, adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            status.style.color = 'var(--secondary)';
+            status.textContent = 'Grade boundaries saved.';
+        })
+        .catch(function(err) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Save failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false; btn.textContent = 'Save Boundaries';
+        });
+    }
+
+    // --- QUESTION MANAGER ---
+    var allQuestions = [];
+    var currentQSet  = 'A';
+    var editingQId   = null;
+
+    function toggleQuestions() {
+        var body    = document.getElementById('questionsBody');
+        var chevron = document.getElementById('questionsChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+        if (open && allQuestions.length === 0) { loadQuestions(); }
+    }
+
+    function loadQuestions() {
+        var msg = document.getElementById('questionsLoadMsg');
+        msg.textContent = 'Loading...';
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'adminQuestions', adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            allQuestions = data.questions || [];
+            renderQList('A');
+            renderQList('B');
+            renderQList('C');
+            msg.textContent = '';
+        })
+        .catch(function() { msg.textContent = 'Failed to load questions.'; });
+    }
+
+    function showQSet(s) {
+        currentQSet = s;
+        ['A', 'B', 'C'].forEach(function(x) {
+            document.getElementById('qlist-' + x).style.display = x === s ? '' : 'none';
+            document.getElementById('qtab-' + x).classList.toggle('active', x === s);
+        });
+    }
+
+    function renderQList(s) {
+        var container = document.getElementById('qlist-' + s);
+        var qs = allQuestions.filter(function(q) { return q.set === s; });
+        if (qs.length === 0) {
+            container.innerHTML = '<p style="color:var(--muted); font-size:13px;">No questions for Set ' + s + '.</p>';
+            return;
+        }
+        var html = '<table style="width:100%; border-collapse:collapse; font-size:13px;">' +
+            '<thead><tr style="border-bottom:2px solid var(--border);">' +
+            '<th style="text-align:left; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Type</th>' +
+            '<th style="text-align:center; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Pts</th>' +
+            '<th style="text-align:left; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Question</th>' +
+            '<th style="padding:7px 10px;"></th>' +
+            '</tr></thead><tbody>';
+        qs.forEach(function(q, i) {
+            var typeLabel = q.type === 'mc' ? 'MC' : 'OE';
+            var typeBg    = q.type === 'mc' ? '#DBEAFE' : '#D1FAE5';
+            var typeColor = q.type === 'mc' ? '#1D4ED8' : '#065F46';
+            var preview   = q.text.length > 80 ? q.text.slice(0, 80) + '…' : q.text;
+            var rowBg     = i % 2 === 0 ? 'background:var(--bg);' : '';
+            html += '<tr style="' + rowBg + '">' +
+                '<td style="padding:7px 10px;"><span style="background:' + typeBg + '; color:' + typeColor + '; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600;">' + typeLabel + '</span></td>' +
+                '<td style="padding:7px 10px; text-align:center; font-weight:600;">' + q.points + '</td>' +
+                '<td style="padding:7px 10px;">' + escapeHtml(preview) + '</td>' +
+                '<td style="padding:7px 10px; white-space:nowrap;">' +
+                '<button onclick="openEditQuestion(\'' + escapeHtml(q.id) + '\')" style="background:none; border:none; cursor:pointer; color:var(--primary); font-size:16px; padding:2px 6px;" title="Edit">✏</button>' +
+                '<button onclick="deleteQuestion(\'' + escapeHtml(q.id) + '\')" style="background:none; border:none; cursor:pointer; color:var(--error); font-size:16px; padding:2px 6px;" title="Delete">🗑</button>' +
+                '</td></tr>';
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+
+    function buildMcOptions(opts, correctIndex) {
+        var container = document.getElementById('qOptions');
+        container.innerHTML = '';
+        ['A','B','C','D'].forEach(function(letter, i) {
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+            wrap.innerHTML =
+                '<label style="width:20px; font-weight:600; flex-shrink:0;">' + letter + '</label>' +
+                '<input type="text" id="qOpt' + letter + '" value="' + escapeHtml(opts[i] || '') + '" ' +
+                'style="flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px;" placeholder="Option ' + letter + '">' +
+                '<label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap;">' +
+                '<input type="radio" name="qCorrect" value="' + i + '"' + (correctIndex === i ? ' checked' : '') + '> Correct</label>';
+            container.appendChild(wrap);
+        });
+    }
+
+    function toggleQType() {
+        var isMc = document.getElementById('qType').value === 'mc';
+        document.getElementById('qMcSection').style.display = isMc ? '' : 'none';
+        document.getElementById('qOeSection').style.display = isMc ? 'none' : '';
+        if (isMc) { buildMcOptions(['','','',''], 0); }
+    }
+
+    function openAddQuestion() {
+        editingQId = null;
+        document.getElementById('qModalTitle').textContent = 'Add Question';
+        document.getElementById('qSet').value    = currentQSet;
+        document.getElementById('qType').value   = 'mc';
+        document.getElementById('qPoints').value = '1';
+        document.getElementById('qText').value   = '';
+        document.getElementById('qRubric').value = '';
+        document.getElementById('qModalError').style.display = 'none';
+        toggleQType();
+        document.getElementById('questionModal').classList.add('active');
+    }
+
+    function openEditQuestion(id) {
+        var q = allQuestions.find(function(x) { return x.id === id; });
+        if (!q) { return; }
+        editingQId = id;
+        document.getElementById('qModalTitle').textContent = 'Edit Question';
+        document.getElementById('qSet').value    = q.set;
+        document.getElementById('qType').value   = q.type;
+        document.getElementById('qPoints').value = q.points;
+        document.getElementById('qText').value   = q.text;
+        document.getElementById('qRubric').value = q.rubric || '';
+        document.getElementById('qModalError').style.display = 'none';
+
+        var isMc = q.type === 'mc';
+        document.getElementById('qMcSection').style.display = isMc ? '' : 'none';
+        document.getElementById('qOeSection').style.display = isMc ? 'none' : '';
+        if (isMc) { buildMcOptions([q.optA, q.optB, q.optC, q.optD], q.correctIndex || 0); }
+        document.getElementById('questionModal').classList.add('active');
+    }
+
+    function closeQuestionModal() {
+        document.getElementById('questionModal').classList.remove('active');
+    }
+
+    function saveQuestion() {
+        var qType   = document.getElementById('qType').value;
+        var qText   = document.getElementById('qText').value.trim();
+        var qPoints = parseInt(document.getElementById('qPoints').value, 10);
+        var errEl   = document.getElementById('qModalError');
+
+        if (!qText)           { errEl.textContent = 'Question text is required.'; errEl.style.display = 'block'; return; }
+        if (!qPoints || qPoints < 1) { errEl.textContent = 'Points must be at least 1.'; errEl.style.display = 'block'; return; }
+
+        var q = {
+            id:      editingQId || null,
+            set:     document.getElementById('qSet').value,
+            type:    qType,
+            points:  qPoints,
+            text:    qText,
+            section: '',
+            optA: '', optB: '', optC: '', optD: '',
+            correctIndex: 0,
+            rubric: ''
+        };
+
+        if (qType === 'mc') {
+            q.optA = document.getElementById('qOptA').value.trim();
+            q.optB = document.getElementById('qOptB').value.trim();
+            q.optC = document.getElementById('qOptC').value.trim();
+            q.optD = document.getElementById('qOptD').value.trim();
+            if (!q.optA || !q.optB || !q.optC || !q.optD) { errEl.textContent = 'All four options are required.'; errEl.style.display = 'block'; return; }
+            var correctRadio = document.querySelector('input[name="qCorrect"]:checked');
+            q.correctIndex = correctRadio ? parseInt(correctRadio.value, 10) : 0;
+        } else {
+            q.rubric = document.getElementById('qRubric').value.trim();
+            if (!q.rubric) { errEl.textContent = 'Rubric is required for open-ended questions.'; errEl.style.display = 'block'; return; }
+        }
+
+        var action = editingQId ? 'updateQuestion' : 'addQuestion';
+        var btn = document.querySelector('#questionModal .btn-save');
+        btn.disabled = true; btn.textContent = 'Saving...';
+        errEl.style.display = 'none';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: action, question: q, adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            closeQuestionModal();
+            loadQuestions();
+        })
+        .catch(function(err) {
+            errEl.textContent = 'Save failed: ' + err.message;
+            errEl.style.display = 'block';
+        })
+        .finally(function() { btn.disabled = false; btn.textContent = 'Save Question'; });
+    }
+
+    function deleteQuestion(id) {
+        var q = allQuestions.find(function(x) { return x.id === id; });
+        if (!q) { return; }
+        var preview = q.text.length > 60 ? q.text.slice(0, 60) + '…' : q.text;
+        if (!confirm('Delete question?\n\n"' + preview + '"\n\nThis cannot be undone.')) { return; }
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'deleteQuestion', questionId: id, adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            loadQuestions();
+        })
+        .catch(function(err) { alert('Delete failed: ' + err.message); });
+    }
+
     function saveConfig() {
         var btn    = document.querySelector('.btn-save');
         var status = document.getElementById('saveStatus');
@@ -612,8 +1150,11 @@
             exam_subtitle:          document.getElementById('cfgSubtitle').value.trim(),
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
             class_options:          document.getElementById('cfgClasses').value.trim(),
-            admin_password:         document.getElementById('cfgPassword').value
+            randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
+            questions_per_set:      document.getElementById('cfgQPerSet').value.trim()
         };
+        var newPw = document.getElementById('cfgPassword').value;
+        if (newPw) { updates['admin_password'] = newPw; }
 
         btn.disabled = true;
         btn.textContent = 'Saving...';
@@ -622,13 +1163,15 @@
 
         fetch(appsScriptUrl, {
             method: 'POST',
-            body: JSON.stringify({ action: 'updateConfig', updates: updates })
+            body: JSON.stringify({ action: 'updateConfig', updates: updates, adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
                 status.className = 'save-status success';
                 status.textContent = 'Settings saved.';
+                if (newPw) { sessionStorage.setItem(adminSessionKey, newPw); }
+                document.getElementById('cfgPassword').value = '';
                 // Reflect title changes immediately
                 if (updates.exam_title) {
                     document.getElementById('adminTitle').textContent = updates.exam_title + ' — Admin';
@@ -663,6 +1206,36 @@
         });
     }
 
+    function recalcGrades() {
+        var btn    = document.getElementById('recalcBtn');
+        var status = document.getElementById('recalcStatus');
+        if (!confirm('Recalculate grades for all submissions?\n\nThis applies current grade boundaries and any score overrides to every row. It cannot be undone.')) { return; }
+        btn.disabled = true;
+        btn.textContent = 'Recalculating...';
+        status.textContent = '';
+        status.style.color = 'var(--muted)';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'recalculate', adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            status.style.color = 'var(--secondary)';
+            status.textContent = 'Done — ' + data.changed + ' submission' + (data.changed !== 1 ? 's' : '') + ' updated.';
+            return loadSubmissions();
+        })
+        .catch(function(err) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Recalculate All Grades';
+        });
+    }
+
     function buildStats() {
         var row = document.getElementById('statsRow');
         row.innerHTML = '';
@@ -684,6 +1257,235 @@
             card.innerHTML = '<div class="value">' + s.value + '</div><div class="label">' + s.label + '</div>';
             row.appendChild(card);
         });
+    }
+
+    function toggleChart() {
+        var body    = document.getElementById('chartBody');
+        var chevron = document.getElementById('chartChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+    }
+
+    function toggleAnalysis() {
+        var body    = document.getElementById('analysisBody');
+        var chevron = document.getElementById('analysisChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+    }
+
+    function buildChart() {
+        var panel  = document.getElementById('chartPanel');
+        var canvas = document.getElementById('gradeChart');
+        if (!panel || !canvas) return;
+
+        var cls  = document.getElementById('classFilter').value;
+        var data = allSubmissions.filter(function(s) { return !cls || s.class === cls; });
+
+        if (data.length === 0) { panel.style.display = 'none'; return; }
+        panel.style.display = '';
+
+        var sets   = ['A', 'B', 'C'];
+        var colors = { A: '#1F4E78', B: '#27AE60', C: '#E67E22' };
+        var labels = ['0-9','10-19','20-29','30-39','40-49','50-59','60-69','70-79','80-89','90+'];
+
+        var buckets = {};
+        sets.forEach(function(s) { buckets[s] = new Array(10).fill(0); });
+        data.forEach(function(sub) {
+            var b = Math.min(9, Math.floor(sub.percentage / 10));
+            if (buckets[sub.set]) { buckets[sub.set][b]++; }
+        });
+
+        var activeSets = sets.filter(function(s) {
+            return buckets[s].some(function(v) { return v > 0; });
+        });
+
+        var legend = document.getElementById('chartLegend');
+        legend.innerHTML = '';
+        activeSets.forEach(function(s) {
+            var span = document.createElement('span');
+            span.style.cssText = 'display:flex; align-items:center; gap:4px;';
+            span.innerHTML = '<span style="width:10px;height:10px;background:' + colors[s] + ';border-radius:2px;display:inline-block;"></span> Set ' + s;
+            legend.appendChild(span);
+        });
+
+        var maxVal = 0;
+        activeSets.forEach(function(s) {
+            buckets[s].forEach(function(v) { if (v > maxVal) maxVal = v; });
+        });
+
+        var dpr  = window.devicePixelRatio || 1;
+        var cssW = document.getElementById('chartBody').clientWidth - 40;
+        var cssH = 180;
+        canvas.style.width  = cssW + 'px';
+        canvas.style.height = cssH + 'px';
+        canvas.width  = cssW * dpr;
+        canvas.height = cssH * dpr;
+
+        var ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, cssW, cssH);
+
+        var padL = 28, padR = 8, padT = 10, padB = 36;
+        var chartW = cssW - padL - padR;
+        var chartH = cssH - padT - padB;
+
+        var steps = Math.min(maxVal, 5);
+        for (var yi = 0; yi <= steps; yi++) {
+            var yVal = Math.round((maxVal / steps) * yi);
+            var yPos = padT + chartH - (yVal / maxVal) * chartH;
+            ctx.strokeStyle = '#E2E8F0';
+            ctx.lineWidth   = 1;
+            ctx.beginPath(); ctx.moveTo(padL, yPos); ctx.lineTo(padL + chartW, yPos); ctx.stroke();
+            ctx.fillStyle  = '#94A3B8';
+            ctx.font       = '10px Arial';
+            ctx.textAlign  = 'right';
+            ctx.fillText(yVal, padL - 4, yPos + 3);
+        }
+
+        var groupW   = chartW / 10;
+        var barW     = (groupW * 0.8) / activeSets.length;
+        var groupPad = groupW * 0.1;
+
+        activeSets.forEach(function(s, si) {
+            buckets[s].forEach(function(count, bi) {
+                if (count === 0) return;
+                var barH = (count / maxVal) * chartH;
+                var x    = padL + bi * groupW + groupPad + si * barW;
+                var y    = padT + chartH - barH;
+                ctx.fillStyle = colors[s];
+                ctx.fillRect(x, y, barW - 1, barH);
+                ctx.fillStyle  = '#475569';
+                ctx.font       = '9px Arial';
+                ctx.textAlign  = 'center';
+                ctx.fillText(count, x + (barW - 1) / 2, y - 3);
+            });
+        });
+
+        ctx.fillStyle  = '#94A3B8';
+        ctx.font       = '10px Arial';
+        ctx.textAlign  = 'center';
+        labels.forEach(function(lbl, bi) {
+            ctx.fillText(lbl + '%', padL + bi * groupW + groupW / 2, padT + chartH + 16);
+        });
+
+        ctx.strokeStyle = '#CBD5E1';
+        ctx.lineWidth   = 1;
+        ctx.beginPath();
+        ctx.moveTo(padL, padT + chartH + 0.5);
+        ctx.lineTo(padL + chartW, padT + chartH + 0.5);
+        ctx.stroke();
+    }
+
+    function buildAnalysis() {
+        var panel = document.getElementById('analysisPanel');
+        if (!panel) return;
+
+        var cls = document.getElementById('classFilter').value;
+        var set = document.getElementById('setFilter').value;
+        var data = allSubmissions.filter(function(s) {
+            return (!cls || s.class === cls) && (!set || s.set === set);
+        });
+
+        if (data.length === 0) { panel.style.display = 'none'; return; }
+        panel.style.display = '';
+
+        // --- Per-class summary table ---
+        var byClass = {};
+        data.forEach(function(s) {
+            if (!byClass[s.class]) byClass[s.class] = [];
+            byClass[s.class].push(s);
+        });
+
+        var th = function(t) { return '<th style="text-align:' + (t === 'Class' ? 'left' : 'center') + '; padding:8px 12px; color:var(--muted); font-size:11px; text-transform:uppercase; font-weight:600;">' + t + '</th>'; };
+        var td = function(t, extra) { return '<td style="padding:8px 12px; text-align:center;' + (extra || '') + '">' + t + '</td>'; };
+
+        var html = '<table style="width:100%; border-collapse:collapse; font-size:13px; margin-bottom:24px;">' +
+            '<thead><tr style="border-bottom:2px solid var(--border);">' +
+            th('Class') + th('Students') + th('Avg %') + th('Avg Grade') + th('≥ 50%') + th('Penalties') +
+            '</tr></thead><tbody>';
+
+        Object.keys(byClass).sort().forEach(function(c, idx) {
+            var subs = byClass[c];
+            var n        = subs.length;
+            var avgPct   = Math.round(subs.reduce(function(a, s) { return a + s.percentage; }, 0) / n);
+            var avgGrade = (subs.reduce(function(a, s) { return a + (parseFloat(s.finalGrade) || 0); }, 0) / n).toFixed(2);
+            var passing  = subs.filter(function(s) { return s.percentage >= 50; }).length;
+            var pens     = subs.filter(function(s) { return s.penalty > 0; }).length;
+            var bg       = idx % 2 === 0 ? 'background:var(--bg);' : '';
+            html += '<tr style="' + bg + '">' +
+                '<td style="padding:8px 12px; font-weight:600;">' + c + '</td>' +
+                td(n) + td(avgPct + '%') + td(avgGrade) +
+                td(passing + ' / ' + n) +
+                td(pens, pens > 0 ? ' color:var(--error); font-weight:600;' : ' color:var(--muted);') +
+                '</tr>';
+        });
+        html += '</tbody></table>';
+
+        // --- Set comparison (only when not filtered to one set) ---
+        if (!set) {
+            var bySets = {};
+            data.forEach(function(s) {
+                if (!bySets[s.set]) bySets[s.set] = [];
+                bySets[s.set].push(s);
+            });
+            var setKeys = Object.keys(bySets).sort();
+            if (setKeys.length > 1) {
+                html += '<table style="width:100%; border-collapse:collapse; font-size:13px; margin-bottom:24px;">' +
+                    '<thead><tr style="border-bottom:2px solid var(--border);">' +
+                    th('Set') + th('Students') + th('Avg %') + th('Avg Grade') +
+                    '</tr></thead><tbody>';
+                setKeys.forEach(function(s, idx) {
+                    var subs = bySets[s];
+                    var n        = subs.length;
+                    var avgPct   = Math.round(subs.reduce(function(a, r) { return a + r.percentage; }, 0) / n);
+                    var avgGrade = (subs.reduce(function(a, r) { return a + (parseFloat(r.finalGrade) || 0); }, 0) / n).toFixed(2);
+                    var bg = idx % 2 === 0 ? 'background:var(--bg);' : '';
+                    html += '<tr style="' + bg + '"><td style="padding:8px 12px; font-weight:600;">Set ' + s + '</td>' +
+                        td(n) + td(avgPct + '%') + td(avgGrade) + '</tr>';
+                });
+                html += '</tbody></table>';
+            }
+        }
+
+        // --- Question difficulty bars ---
+        var qTotals = {};
+        data.forEach(function(s) {
+            (s.questionScores || []).forEach(function(qs, qi) {
+                if (!qTotals[qi]) { qTotals[qi] = { sum: 0, count: 0, max: qs.maxScore || 8 }; }
+                var score = (qs.override !== null && qs.override !== undefined) ? qs.override : qs.aiScore;
+                qTotals[qi].sum += score;
+                qTotals[qi].count++;
+            });
+        });
+
+        var mcSubs = data.filter(function(s) { return s.mcMax > 0; });
+        var qKeys  = Object.keys(qTotals).map(Number).sort(function(a, b) { return a - b; });
+
+        if (mcSubs.length > 0 || qKeys.length > 0) {
+            html += '<div><p style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:12px;">Question Difficulty (avg score)</p>';
+
+            function bar(label, pct) {
+                var color = pct >= 70 ? 'var(--secondary)' : pct >= 40 ? 'var(--warning)' : 'var(--error)';
+                return '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
+                    '<span style="width:72px; font-size:12px; color:var(--muted); flex-shrink:0;">' + label + '</span>' +
+                    '<div style="flex:1; background:var(--bg); border-radius:4px; height:14px; overflow:hidden;">' +
+                    '<div style="width:' + pct + '%; background:' + color + '; height:100%; border-radius:4px; transition:width 0.3s;"></div></div>' +
+                    '<span style="width:36px; font-size:12px; font-weight:600; color:var(--text); text-align:right;">' + pct + '%</span></div>';
+            }
+
+            if (mcSubs.length > 0) {
+                var mcAvg = Math.round(mcSubs.reduce(function(a, s) { return a + (s.mcScore / s.mcMax) * 100; }, 0) / mcSubs.length);
+                html += bar('MC', mcAvg);
+            }
+            qKeys.forEach(function(qi) {
+                var t   = qTotals[qi];
+                var avg = t.count > 0 ? Math.round((t.sum / t.count / t.max) * 100) : 0;
+                html += bar('Open Q' + (qi + 1), avg);
+            });
+            html += '</div>';
+        }
+
+        document.getElementById('analysisContent').innerHTML = html;
     }
 
     function getFiltered() {
@@ -769,6 +1571,8 @@
         });
 
         document.getElementById('rowCount').textContent = rows.length + ' student' + (rows.length !== 1 ? 's' : '') + ' shown';
+        buildChart();
+        buildAnalysis();
     }
 
     function openModal(s) {
@@ -824,7 +1628,10 @@
 
         document.getElementById('detailModal').classList.add('active');
 
-        fetch(appsScriptUrl + '?action=details&timestamp=' + encodeURIComponent(s.timestamp))
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'details', timestamp: s.timestamp, adminPassword: getStoredAdminPassword() })
+        })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 answersSection.removeChild(loadingMsg);
@@ -949,7 +1756,7 @@
 
         fetch(appsScriptUrl, {
             method: 'POST',
-            body: JSON.stringify({ action: 'override', timestamp: s.timestamp, questionScores: scores })
+            body: JSON.stringify({ action: 'override', timestamp: s.timestamp, questionScores: scores, adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -994,7 +1801,7 @@
 
         fetch(appsScriptUrl, {
             method: 'POST',
-            body: JSON.stringify({ action: 'deleteSubmission', timestamp: s.timestamp })
+            body: JSON.stringify({ action: 'deleteSubmission', timestamp: s.timestamp, adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1009,6 +1816,45 @@
             btn.disabled = false;
             btn.textContent = 'Delete Submission';
         });
+    }
+
+    function exportCSV() {
+        var rows = getFiltered();
+        if (rows.length === 0) { alert('No submissions to export.'); return; }
+
+        var cols = ['Last Name', 'First Name', 'Email', 'Class', 'Set', '%', 'Grade', 'MC Score', 'Open Score', 'Penalty', 'Tab Switches', 'Submitted'];
+
+        function esc(v) {
+            var s = String(v === null || v === undefined ? '' : v);
+            if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) {
+                s = '"' + s.replace(/"/g, '""') + '"';
+            }
+            return s;
+        }
+
+        var lines = [cols.join(',')];
+        rows.forEach(function(s) {
+            lines.push([
+                s.lastName, s.firstName, s.email || '', s.class, s.set,
+                s.percentage, s.finalGrade,
+                s.mcScore !== undefined ? s.mcScore : '',
+                s.openScore !== undefined ? s.openScore : '',
+                s.penalty || 0, s.tabSwitches || 0,
+                s.timestamp
+            ].map(esc).join(','));
+        });
+
+        var cls  = document.getElementById('classFilter').value;
+        var set  = document.getElementById('setFilter').value;
+        var name = (currentConfig.exam_title || 'grades').replace(/[^a-z0-9]/gi, '_');
+        var suffix = (cls ? '_' + cls : '') + (set ? '_Set' + set : '');
+        var filename = name + suffix + '.csv';
+
+        var blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        var url  = URL.createObjectURL(blob);
+        var a    = document.createElement('a');
+        a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
     }
 
     function escapeHtml(text) {

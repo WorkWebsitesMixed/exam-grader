@@ -6,6 +6,7 @@
 // ============================================================
 
 var GEMINI_API_KEY    = 'PASTE_YOUR_KEY_HERE';
+var GOOGLE_CLIENT_ID  = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 var SUBMISSIONS_SHEET = 'Submissions';
 var DETAILS_SHEET     = 'Detailed_Answers';
 var QUESTIONS_SHEET   = 'Questions';
@@ -118,6 +119,63 @@ function loadEffectiveBoundaries() {
 }
 
 // ============================================================
+// ADMIN AUTH HELPERS
+// ============================================================
+function getAdminPassword() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG_SHEET);
+  if (!sheet) return '';
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() === 'admin_password') { return String(rows[i][1]); }
+  }
+  return '';
+}
+
+function checkAdminAuth(providedPassword) {
+  var stored = getAdminPassword();
+  if (!stored) return true; // no password configured = open
+  return String(providedPassword) === stored;
+}
+
+function handleVerifyAdmin(data) {
+  var ok = checkAdminAuth(data.password || '');
+  return ContentService
+    .createTextOutput(JSON.stringify({success: ok, error: ok ? null : 'Incorrect password'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// GOOGLE TOKEN VERIFICATION
+// ============================================================
+function verifyGoogleToken(idToken) {
+  try {
+    var url      = 'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken);
+    var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+    if (response.getResponseCode() !== 200) { return null; }
+    var info = JSON.parse(response.getContentText());
+    if (info.aud !== GOOGLE_CLIENT_ID && info.azp !== GOOGLE_CLIENT_ID) { return null; }
+    return info.email ? info : null;
+  } catch(e) { return null; }
+}
+
+function handleMyResults(data) {
+  var idToken = String(data.idToken || '');
+  if (!idToken) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'No token provided'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var tokenInfo = verifyGoogleToken(idToken);
+  if (!tokenInfo) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'Invalid or expired token'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  return getMyResultsResponse(tokenInfo.email);
+}
+
+// ============================================================
 // MENU
 // ============================================================
 function onOpen() {
@@ -135,10 +193,7 @@ function onOpen() {
 // ============================================================
 function doGet(e) {
   var action = (e.parameter && e.parameter.action) ? e.parameter.action : '';
-  if (action === 'submissions') { return getSubmissionsResponse(); }
-  if (action === 'config')      { return getConfigResponse(); }
-  if (action === 'myresults')   { return getMyResultsResponse(e.parameter.email || ''); }
-  if (action === 'details')     { return getDetailsResponse(e.parameter.timestamp || ''); }
+  if (action === 'config') { return getConfigResponse(); }
   return getQuestionsResponse();
 }
 
@@ -176,7 +231,6 @@ function getQuestionsResponse() {
     var optB    = String(row[7]).trim();
     var optC    = String(row[8]).trim();
     var optD    = String(row[9]).trim();
-    var correctIndex = (row[10] !== '' && row[10] !== null && row[10] !== undefined) ? Number(row[10]) : null;
     var rubric  = String(row[11]).trim();
 
     if (!set || !id || !text) { continue; }
@@ -187,9 +241,9 @@ function getQuestionsResponse() {
       var opts = [optA, optB, optC, optD];
       var indices = [0, 1, 2, 3];
       shuffleIndices(indices);
-      q.options      = opts;
-      q.correctIndex = correctIndex;
-      q.shuffled     = indices;
+      q.options  = opts;
+      q.shuffled = indices;
+      // correctIndex intentionally NOT sent to client — graded server-side
     }
 
     if (questions[set] !== undefined) {
@@ -197,8 +251,29 @@ function getQuestionsResponse() {
     }
   }
 
+  // Question bank: randomly sample if configured
+  var questionsPerSet  = parseInt(config['questions_per_set'] || '0', 10);
+  var randomizeBank    = (config['randomize_questions'] || 'false').toLowerCase() === 'true';
+  if (randomizeBank && questionsPerSet > 0) {
+    ['A', 'B', 'C'].forEach(function(s) {
+      if (questions[s].length > questionsPerSet) {
+        for (var i = questions[s].length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = questions[s][i]; questions[s][i] = questions[s][j]; questions[s][j] = tmp;
+        }
+        questions[s] = questions[s].slice(0, questionsPerSet);
+      }
+    });
+  }
+
+  // Strip admin_password before sending to students
+  var safeConfig = {};
+  for (var ck in config) {
+    if (ck !== 'admin_password') { safeConfig[ck] = config[ck]; }
+  }
+
   return ContentService
-    .createTextOutput(JSON.stringify({success: true, questions: questions, config: config}))
+    .createTextOutput(JSON.stringify({success: true, questions: questions, config: safeConfig}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -220,6 +295,9 @@ function getConfigResponse() {
     var v = String(configRows[i][1]).trim();
     if (k) { config[k] = v; }
   }
+  var adminPw = config['admin_password'] || '';
+  delete config['admin_password'];
+  config['admin_password_required'] = adminPw !== '' ? 'true' : 'false';
   return ContentService
     .createTextOutput(JSON.stringify({config: config}))
     .setMimeType(ContentService.MimeType.JSON);
@@ -428,9 +506,31 @@ function shuffleIndices(arr) {
 function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
+
+    // verifyAdmin does its own auth check
+    if (data.action === 'verifyAdmin') { return handleVerifyAdmin(data); }
+    if (data.action === 'myresults')   { return handleMyResults(data); }
+
+    // All admin actions require server-side password verification
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate'];
+    if (adminActions.indexOf(data.action) !== -1) {
+      if (!checkAdminAuth(data.adminPassword || '')) {
+        return ContentService
+          .createTextOutput(JSON.stringify({success: false, error: 'Unauthorized'}))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
+    if (data.action === 'submissions')      { return getSubmissionsResponse(); }
+    if (data.action === 'details')          { return getDetailsResponse(data.timestamp || ''); }
+    if (data.action === 'adminQuestions')   { return getAdminQuestionsResponse(); }
+    if (data.action === 'addQuestion')      { return handleAddQuestion(data); }
+    if (data.action === 'updateQuestion')   { return handleUpdateQuestion(data); }
+    if (data.action === 'deleteQuestion')   { return handleDeleteQuestion(data); }
     if (data.action === 'override')         { return handleOverride(data); }
     if (data.action === 'updateConfig')     { return handleUpdateConfig(data); }
     if (data.action === 'deleteSubmission') { return handleDelete(data); }
+    if (data.action === 'recalculate')      { return handleBulkRecalc(); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -444,12 +544,54 @@ function doPost(e) {
 // ============================================================
 function handleSubmission(data) {
   var openEnded    = data.openEnded || [];
-  var mcAnswers    = data.mcAnswers || [];
+  var mcAnswers    = data.mcAnswers || [];  // [{questionId, questionText, selectedText}]
   var set          = data.set           || 'A';
   var email        = String(data.email  || '').toLowerCase().trim();
-  var mcScore      = Number(data.mcScore)       || 0;
-  var penaltyPoints= Number(data.penaltyPoints) || 0;
-  var tabSwitches  = Number(data.tabSwitches)   || 0;
+  var penaltyPoints = Math.max(0, Math.min(Number(data.penaltyPoints) || 0, 4));
+  var tabSwitches   = Math.max(0, Math.min(Number(data.tabSwitches)  || 0, 10));
+
+  // Override email with server-verified identity when token is present
+  if (data.idToken) {
+    var tokenInfo = verifyGoogleToken(data.idToken);
+    if (tokenInfo && tokenInfo.email) { email = tokenInfo.email.toLowerCase().trim(); }
+  }
+
+  // Load all questions for server-side grading (MC correctness + authoritative points)
+  var ss2 = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss2.getSheetByName(QUESTIONS_SHEET);
+  var questionMap = {};
+  if (qSheet) {
+    var qData = qSheet.getDataRange().getValues();
+    for (var qi = 1; qi < qData.length; qi++) {
+      var qr = qData[qi];
+      var qtype = String(qr[3]).trim();
+      var qid   = String(qr[1]).trim();
+      if (!qid) { continue; }
+      if (qtype === 'mc') {
+        var opts = [String(qr[6]).trim(), String(qr[7]).trim(), String(qr[8]).trim(), String(qr[9]).trim()];
+        var cidx = Number(qr[10]);
+        questionMap[qid] = {type: 'mc', correctText: opts[cidx], points: Number(qr[4])};
+      } else {
+        questionMap[qid] = {type: qtype, points: Number(qr[4])};
+      }
+    }
+  }
+
+  // Re-grade MC answers server-side
+  var mcScore = 0;
+  var mcFeedback = [];
+  var verifiedMcAnswers = [];
+  for (var mi = 0; mi < mcAnswers.length; mi++) {
+    var mc = mcAnswers[mi];
+    var qInfo = questionMap[mc.questionId];
+    var selectedText = String(mc.selectedText || 'No answer').trim();
+    var correctText  = qInfo ? qInfo.correctText : '';
+    var mcPoints     = qInfo ? qInfo.points : 0;
+    var correct      = (qInfo && selectedText !== 'No answer' && selectedText === correctText);
+    if (correct) { mcScore += mcPoints; }
+    mcFeedback.push({questionId: mc.questionId, questionText: mc.questionText || '', correct: correct, selectedText: selectedText, correctText: correctText, earned: correct ? mcPoints : 0, points: mcPoints});
+    verifiedMcAnswers.push({questionId: mc.questionId, questionText: mc.questionText || '', selectedText: selectedText, correctText: correctText, correct: correct, points: mcPoints});
+  }
 
   // Duplicate guard — one submission per email+set
   if (email) {
@@ -468,26 +610,25 @@ function handleSubmission(data) {
     }
   }
 
-  // Grade open-ended questions
+  // Grade open-ended questions using authoritative points from sheet
   var openFeedback      = [];
   var openAIScores      = [];
   var totalOpenScore    = 0;
   var openFeedbackParts = [];
 
   for (var i = 0; i < openEnded.length; i++) {
-    var q      = openEnded[i];
-    var result = gradeWithGemini(q.text, q.rubric, q.points);
-    openFeedback.push({questionId: q.questionId, score: result.score, maxScore: q.points, feedback: result.feedback});
+    var q          = openEnded[i];
+    var authPoints = (questionMap[q.questionId] ? questionMap[q.questionId].points : 0) || q.points;
+    var result     = gradeWithGemini(q.text, q.rubric, authPoints);
+    openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback});
     openAIScores.push(result.score);
     totalOpenScore += result.score;
-    openFeedbackParts.push(q.questionId + ': ' + result.score + '/' + q.points + ' - ' + result.feedback);
+    openFeedbackParts.push(q.questionId + ': ' + result.score + '/' + authPoints + ' - ' + result.feedback);
   }
 
-  // Calculate totals
-  var mcMax   = 0;
-  for (var mi = 0; mi < mcAnswers.length; mi++)  { mcMax   += mcAnswers[mi].points; }
-  var openMax = 0;
-  for (var oi = 0; oi < openEnded.length; oi++)  { openMax += openEnded[oi].points; }
+  // Calculate totals — both from server-verified data, not client
+  var mcMax   = mcFeedback.reduce(function(s, f) { return s + f.points; }, 0);
+  var openMax = openFeedback.reduce(function(s, f) { return s + f.maxScore; }, 0);
   var totalMax = mcMax + openMax;
 
   var rawScore          = mcScore + totalOpenScore;
@@ -524,23 +665,40 @@ function handleSubmission(data) {
     lastName:     data.lastName,
     studentClass: data.class,
     set:          set,
-    mcAnswers:    mcAnswers,
+    mcAnswers:    verifiedMcAnswers,
     openEnded:    openEnded,
     openFeedback: openFeedback
   });
 
+  if (email) {
+    sendResultsEmail({
+      email:       email,
+      firstName:   data.firstName,
+      lastName:    data.lastName,
+      set:         set,
+      finalGrade:  finalGrade,
+      percentage:  percentage,
+      totalScore:  scoreAfterPenalty,
+      maxScore:    totalMax,
+      penalty:     penaltyPoints,
+      mcFeedback:  mcFeedback,
+      openFeedback: openFeedback
+    });
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({
-      success:    true,
-      firstName:  data.firstName,
-      lastName:   data.lastName,
-      set:        set,
-      totalScore: scoreAfterPenalty,
-      maxScore:   totalMax,
-      percentage: percentage,
-      finalGrade: finalGrade,
-      penalty:    penaltyPoints,
-      openFeedback: openFeedback
+      success:      true,
+      firstName:    data.firstName,
+      lastName:     data.lastName,
+      set:          set,
+      totalScore:   scoreAfterPenalty,
+      maxScore:     totalMax,
+      percentage:   percentage,
+      finalGrade:   finalGrade,
+      penalty:      penaltyPoints,
+      openFeedback: openFeedback,
+      mcFeedback:   mcFeedback
     }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -775,6 +933,11 @@ function handleUpdateConfig(data) {
   var rows = sheet.getDataRange().getValues();
   var updates = data.updates || {};
 
+  // Don't overwrite the password with a blank value (blank = "keep current")
+  if (updates.hasOwnProperty('admin_password') && updates['admin_password'] === '') {
+    delete updates['admin_password'];
+  }
+
   for (var i = 0; i < rows.length; i++) {
     var key = String(rows[i][0]).trim();
     if (updates.hasOwnProperty(key)) {
@@ -830,6 +993,228 @@ function handleDelete(data) {
 }
 
 // ============================================================
+// ============================================================
+// RESULTS EMAIL
+// ============================================================
+function escapeHtmlGas(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function sendResultsEmail(p) {
+  try {
+    var examTitle = 'Exam';
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var cfg = ss.getSheetByName(CONFIG_SHEET);
+    if (cfg) {
+      var cfgRows = cfg.getDataRange().getValues();
+      for (var ci = 0; ci < cfgRows.length; ci++) {
+        if (String(cfgRows[ci][0]).trim() === 'exam_title' && cfgRows[ci][1]) {
+          examTitle = String(cfgRows[ci][1]).trim();
+          break;
+        }
+      }
+    }
+
+    var gradeColor  = '#27AE60';
+    var subject     = examTitle + ' — Your Results';
+
+    var html = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0F172A;">' +
+
+      // Header
+      '<div style="background:#1F4E78;color:white;padding:28px 24px;border-radius:8px 8px 0 0;">' +
+        '<h1 style="margin:0;font-size:22px;">' + escapeHtmlGas(examTitle) + '</h1>' +
+        '<p style="margin:6px 0 0;opacity:0.85;font-size:14px;">Results for ' +
+          escapeHtmlGas(p.firstName) + ' ' + escapeHtmlGas(p.lastName) +
+          ' &mdash; Set ' + p.set + '</p>' +
+      '</div>' +
+
+      // Score strip
+      '<table width="100%" cellpadding="0" cellspacing="0" style="background:#F0F7FF;border:1px solid #BFDBFE;border-top:none;">' +
+        '<tr>' +
+          '<td align="center" style="padding:20px;">' +
+            '<div style="font-size:48px;font-weight:bold;color:' + gradeColor + ';line-height:1;">' + escapeHtmlGas(p.finalGrade) + '</div>' +
+            '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Final Grade</div>' +
+          '</td>' +
+          '<td align="center" style="padding:20px;border-left:1px solid #BFDBFE;">' +
+            '<div style="font-size:36px;font-weight:bold;color:#1F4E78;">' + p.percentage + '%</div>' +
+            '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Score</div>' +
+          '</td>' +
+          '<td align="center" style="padding:20px;border-left:1px solid #BFDBFE;">' +
+            '<div style="font-size:28px;font-weight:bold;color:#1F4E78;">' + p.totalScore + '/' + p.maxScore + '</div>' +
+            '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Points</div>' +
+          '</td>' +
+        '</tr>' +
+      '</table>';
+
+    if (p.penalty > 0) {
+      html += '<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-top:none;padding:10px 20px;font-size:13px;color:#DC2626;">' +
+        '&#9888; &minus;' + p.penalty + ' point anti-cheating penalty applied' +
+      '</div>';
+    }
+
+    // Question breakdown
+    html += '<div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">';
+
+    (p.mcFeedback || []).forEach(function(mc) {
+      var bg     = mc.correct ? '#F0FDF4' : '#FEF2F2';
+      var border = mc.correct ? '#86EFAC' : '#FCA5A5';
+      var icon   = mc.correct ? '&#10003;' : '&#10007;';
+      var iconColor = mc.correct ? '#16A34A' : '#DC2626';
+      html += '<div style="border-top:1px solid #E2E8F0;padding:14px 20px;background:' + bg + ';">' +
+        '<div style="font-size:11px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">' +
+          'Multiple Choice &mdash; ' + mc.earned + '/' + mc.points + ' pts</div>' +
+        '<div style="font-weight:600;font-size:14px;margin-bottom:8px;">' + escapeHtmlGas(mc.questionText) + '</div>' +
+        '<div style="font-size:13px;color:' + iconColor + ';font-weight:600;">' + icon + ' Your answer: ' + escapeHtmlGas(mc.selectedText) + '</div>';
+      if (!mc.correct && mc.correctText) {
+        html += '<div style="font-size:13px;color:#16A34A;margin-top:4px;">&#10003; Correct answer: <strong>' + escapeHtmlGas(mc.correctText) + '</strong></div>';
+      }
+      html += '</div>';
+    });
+
+    (p.openFeedback || []).forEach(function(oe) {
+      html += '<div style="border-top:1px solid #E2E8F0;padding:14px 20px;">' +
+        '<div style="font-size:11px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">' +
+          'Open-Ended &mdash; ' + oe.score + '/' + oe.maxScore + ' pts</div>' +
+        '<div style="font-weight:600;font-size:14px;margin-bottom:8px;">' + escapeHtmlGas(oe.questionText) + '</div>';
+      if (oe.studentAnswer) {
+        html += '<div style="background:#F8FAFC;border-left:3px solid #94A3B8;padding:8px 12px;font-size:13px;color:#475569;margin-bottom:8px;">' +
+          escapeHtmlGas(oe.studentAnswer) + '</div>';
+      }
+      html += '<div style="font-size:13px;color:#1F4E78;font-style:italic;">&#128172; ' + escapeHtmlGas(oe.feedback) + '</div>' +
+      '</div>';
+    });
+
+    html += '</div>' +
+      '<p style="font-size:12px;color:#94A3B8;text-align:center;margin-top:16px;">' +
+        'You can view your results at any time on the Results page.</p>' +
+    '</div>';
+
+    MailApp.sendEmail({ to: p.email, subject: subject, htmlBody: html });
+
+  } catch(e) {
+    console.log('Results email failed: ' + e.message);
+  }
+}
+
+// ============================================================
+// QUESTION MANAGEMENT  (admin panel)
+// ============================================================
+function getAdminQuestionsResponse() {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+  if (!qSheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({questions: []}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var rows = qSheet.getDataRange().getValues();
+  var questions = [];
+  for (var r = 1; r < rows.length; r++) {
+    var row = rows[r];
+    var id  = String(row[1]).trim();
+    if (!id) { continue; }
+    questions.push({
+      rowIndex:     r + 1,
+      set:          String(row[0]).trim(),
+      id:           id,
+      section:      String(row[2]).trim(),
+      type:         String(row[3]).trim(),
+      points:       Number(row[4]) || 1,
+      text:         String(row[5]).trim(),
+      optA:         String(row[6]).trim(),
+      optB:         String(row[7]).trim(),
+      optC:         String(row[8]).trim(),
+      optD:         String(row[9]).trim(),
+      correctIndex: (row[10] !== '' && row[10] !== null && row[10] !== undefined) ? Number(row[10]) : 0,
+      rubric:       String(row[11]).trim()
+    });
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify({questions: questions}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleAddQuestion(data) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+  if (!qSheet) { qSheet = createQuestionsSheet(ss); }
+  var q  = data.question || {};
+  var id = String(q.set || 'A').toUpperCase() + '_' + Date.now();
+  qSheet.appendRow([
+    String(q.set || 'A').toUpperCase(),
+    id,
+    String(q.section || ''),
+    String(q.type || 'mc'),
+    Number(q.points) || 1,
+    String(q.text || ''),
+    String(q.optA || ''),
+    String(q.optB || ''),
+    String(q.optC || ''),
+    String(q.optD || ''),
+    q.type === 'mc' ? (Number(q.correctIndex) || 0) : '',
+    String(q.rubric || '')
+  ]);
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true, id: id}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleUpdateQuestion(data) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+  if (!qSheet) { return ContentService.createTextOutput(JSON.stringify({success: false, error: 'No Questions sheet'})).setMimeType(ContentService.MimeType.JSON); }
+  var q        = data.question || {};
+  var targetId = String(q.id || '');
+  var rows     = qSheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][1]).trim() === targetId) {
+      qSheet.getRange(i + 1, 1, 1, 12).setValues([[
+        String(q.set || rows[i][0]).toUpperCase(),
+        targetId,
+        String(q.section !== undefined ? q.section : rows[i][2]),
+        String(q.type || rows[i][3]),
+        Number(q.points) || rows[i][4],
+        String(q.text || rows[i][5]),
+        String(q.optA !== undefined ? q.optA : rows[i][6]),
+        String(q.optB !== undefined ? q.optB : rows[i][7]),
+        String(q.optC !== undefined ? q.optC : rows[i][8]),
+        String(q.optD !== undefined ? q.optD : rows[i][9]),
+        (q.type || rows[i][3]) === 'mc' ? Number(q.correctIndex !== undefined ? q.correctIndex : rows[i][10]) : '',
+        String(q.rubric !== undefined ? q.rubric : rows[i][11])
+      ]]);
+      return ContentService
+        .createTextOutput(JSON.stringify({success: true}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify({success: false, error: 'Question not found'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleDeleteQuestion(data) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+  if (!qSheet) { return ContentService.createTextOutput(JSON.stringify({success: false, error: 'No Questions sheet'})).setMimeType(ContentService.MimeType.JSON); }
+  var targetId = String(data.questionId || '');
+  var rows     = qSheet.getDataRange().getValues();
+  for (var i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][1]).trim() === targetId) {
+      qSheet.deleteRow(i + 1);
+      return ContentService
+        .createTextOutput(JSON.stringify({success: true}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify({success: false, error: 'Question not found'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 // RECALCULATION HELPER
 // ============================================================
 function recalcRow(row, boundaries) {
@@ -905,6 +1290,40 @@ function recalculateWithOverrides() {
 }
 
 // ============================================================
+// HANDLE BULK RECALCULATE  (from admin.html)
+// ============================================================
+function handleBulkRecalc() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SUBMISSIONS_SHEET);
+  if (!sheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'No Submissions sheet found.'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var data    = sheet.getDataRange().getValues();
+  var changed = 0;
+  var effectiveBoundaries = loadEffectiveBoundaries();
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (row[COL.Q1_AI - 1] === '' || row[COL.Q1_AI - 1] === null || row[COL.Q1_AI - 1] === undefined) { continue; }
+
+    var updated  = recalcRow(row, effectiveBoundaries);
+    var sheetRow = i + 1;
+    sheet.getRange(sheetRow, COL.OPEN_SCORE).setValue(updated.openScore);
+    sheet.getRange(sheetRow, COL.TOTAL_SCORE).setValue(updated.totalScore);
+    sheet.getRange(sheetRow, COL.PERCENTAGE).setValue(updated.percentage);
+    sheet.getRange(sheetRow, COL.FINAL_GRADE).setValue(updated.finalGrade);
+    changed++;
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true, changed: changed}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
 // MENU: BACKFILL AI SCORES
 // ============================================================
 function backfillAIScores() {
@@ -965,6 +1384,8 @@ function createConfigSheet(ss) {
   sheet.appendRow(['exam_duration_minutes', '60']);
   sheet.appendRow(['exam_active',           'true']);
   sheet.appendRow(['admin_password',        '']);
+  sheet.appendRow(['randomize_questions',   'false']);
+  sheet.appendRow(['questions_per_set',     '0']);
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);

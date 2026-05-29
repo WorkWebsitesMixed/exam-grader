@@ -522,7 +522,7 @@
     <div id="waitingScreen">
         <div class="container" style="text-align:center; margin-top:100px;">
             <h1 style="color: var(--primary-color);">Grading in Progress 🤖</h1>
-            <p style="font-size:18px; color:var(--text-muted);">Please wait while the AI evaluates your answers...</p>
+            <p id="waitingMsg" style="font-size:18px; color:var(--text-muted);">Please wait while the AI evaluates your answers...</p>
         </div>
     </div>
 
@@ -740,9 +740,13 @@
         let currentFirstName = '';
         let currentLastName = '';
         let currentEmail = '';
+        let currentIdToken = '';
         let currentStudentClass = null;
         let examActive = false;
         let examStartTime = null;
+        let examSubmitted = false;
+        let pendingResults = null;
+        var answersSessionKey = '';
         let tabSwitches = 0;
         let penaltyPoints = 0;
         let answers = { mc: {}, openEnded: {} };
@@ -794,6 +798,7 @@
 
         function handleGoogleSignIn(response) {
             try {
+                currentIdToken = response.credential;
                 var parts = response.credential.split('.');
                 var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
                 currentEmail = payload.email || '';
@@ -883,7 +888,9 @@
             document.getElementById('setDisplay').textContent = selectedSet;
             document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
 
+            answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
             renderQuestions();
+            restoreAnswers();
             examActive = true;
             examStartTime = Date.now();
             startTimer();
@@ -896,6 +903,33 @@
             questions[selectedSet].forEach(function (q, i) {
                 container.appendChild(createQuestionCard(q, i + 1, 'openEnded'));
             });
+        }
+
+        function saveAnswers() {
+            if (!answersSessionKey) { return; }
+            sessionStorage.setItem(answersSessionKey, JSON.stringify({
+                mc: answers.mc,
+                openEnded: answers.openEnded
+            }));
+        }
+
+        function restoreAnswers() {
+            if (!answersSessionKey) { return; }
+            var stored = sessionStorage.getItem(answersSessionKey);
+            if (!stored) { return; }
+            try {
+                var saved = JSON.parse(stored);
+                Object.keys(saved.mc || {}).forEach(function(qid) {
+                    var letter = saved.mc[qid];
+                    var radio  = document.querySelector('input[name="' + qid + '"][value="' + letter + '"]');
+                    if (radio) { radio.checked = true; answers.mc[qid] = letter; }
+                });
+                Object.keys(saved.openEnded || {}).forEach(function(qid) {
+                    var text     = saved.openEnded[qid];
+                    var textarea = document.querySelector('textarea[data-qid="' + qid + '"]');
+                    if (textarea) { textarea.value = text; answers.openEnded[qid] = text; }
+                });
+            } catch(e) {}
         }
 
         function createQuestionCard(q, num, targetDict) {
@@ -911,13 +945,13 @@
                     var letter = String.fromCharCode(65 + dispIdx);
                     html += '<label class="mc-option">' +
                         '<input type="radio" name="' + q.id + '" value="' + letter + '" ' +
-                        'onchange="answers.mc[\'' + q.id + '\']=\'' + letter + '\'">' +
+                        'onchange="answers.mc[\'' + q.id + '\']=\'' + letter + '\';saveAnswers()">' +
                         '<span>' + letter + '</span>. ' + escapeHtml(q.options[origIdx]) + '</label>';
                 });
                 html += '</div>';
             } else {
-                html += '<textarea placeholder="Type answer/calculations..." ' +
-                    'oninput="answers.' + targetDict + '[\'' + q.id + '\']=this.value"></textarea>';
+                html += '<textarea data-qid="' + q.id + '" placeholder="Type answer/calculations..." ' +
+                    'oninput="answers.' + targetDict + '[\'' + q.id + '\']=this.value;saveAnswers()"></textarea>';
             }
             card.innerHTML = html;
             return card;
@@ -960,30 +994,58 @@
         }
 
         // --- TIMER ---
+        var timerSessionKey = '';
+
         function startTimer() {
             var timerDisplay = document.getElementById('timer');
-            var timeRemaining = examConfig.durationMinutes * 60;
+            var totalSeconds = examConfig.durationMinutes * 60;
+            timerSessionKey  = 'exam_timer_' + currentEmail + '_' + selectedSet;
 
-            var timer = setInterval(function () {
-                timeRemaining--;
-                var minutes = Math.floor(timeRemaining / 60);
-                var seconds = timeRemaining % 60;
+            var stored = sessionStorage.getItem(timerSessionKey);
+            var startTime;
+            if (stored) {
+                try { startTime = JSON.parse(stored).startTime; } catch(e) { startTime = null; }
+            }
+            if (!startTime) {
+                startTime = Date.now();
+                sessionStorage.setItem(timerSessionKey, JSON.stringify({ startTime: startTime, totalSeconds: totalSeconds }));
+            } else {
+                // Restore totalSeconds from stored session in case config changed
+                try { totalSeconds = JSON.parse(stored).totalSeconds || totalSeconds; } catch(e) {}
+            }
+
+            var warned5  = false;
+            var warned1  = false;
+
+            function tick() {
+                var remaining = totalSeconds - Math.floor((Date.now() - startTime) / 1000);
+                if (remaining <= 0) {
+                    timerDisplay.textContent = '00:00';
+                    sessionStorage.removeItem(timerSessionKey);
+                    if (pendingResults) {
+                        showResults(pendingResults);
+                        pendingResults = null;
+                    } else if (!examSubmitted) {
+                        submitExamImmediately();
+                    }
+                    return;
+                }
                 timerDisplay.textContent =
-                    String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-                if (timeRemaining === 300) {
+                    String(Math.floor(remaining / 60)).padStart(2, '0') + ':' +
+                    String(remaining % 60).padStart(2, '0');
+                if (!warned5 && remaining <= 300) {
+                    warned5 = true;
                     timerDisplay.classList.add('warning');
                     showNotification('⏰ 5 minutes remaining!');
                 }
-                if (timeRemaining === 60) {
+                if (!warned1 && remaining <= 60) {
+                    warned1 = true;
                     timerDisplay.classList.add('critical');
                     showNotification('🚨 1 minute remaining - Wrap it up!', true);
                 }
-                if (timeRemaining <= 0) {
-                    clearInterval(timer);
-                    submitExamImmediately();
-                }
-            }, 1000);
+                setTimeout(tick, 500);
+            }
+            tick();
         }
 
         function submitExam() {
@@ -1016,32 +1078,23 @@
         }
 
         function submitExamImmediately() {
+            if (timerSessionKey)   { sessionStorage.removeItem(timerSessionKey); }
+            if (answersSessionKey) { sessionStorage.removeItem(answersSessionKey); }
             examActive = false;
+            examSubmitted = true;
             document.getElementById('examContainer').classList.remove('active');
             document.getElementById('waitingScreen').classList.add('active');
 
-            var mcScore = 0;
+            // Build MC payload — just selected text, no correctness (graded server-side)
             var mcArr = [];
-
             questions[selectedSet].forEach(function (q) {
                 if (q.type === 'mc') {
-                    var isCorrect = false;
                     var selectedText = 'No answer';
                     if (answers.mc[q.id]) {
                         var selIdx = answers.mc[q.id].charCodeAt(0) - 65;
-                        isCorrect = (q.shuffled[selIdx] === q.correctIndex);
                         selectedText = q.options[q.shuffled[selIdx]];
-                        if (isCorrect) { mcScore += q.points; }
                     }
-                    mcArr.push({
-                        questionId: q.id,
-                        questionText: q.text,
-                        selected: answers.mc[q.id] || 'No answer',
-                        selectedText: selectedText,
-                        correctText: q.options[q.correctIndex],
-                        points: q.points,
-                        correct: isCorrect
-                    });
+                    mcArr.push({ questionId: q.id, questionText: q.text, selectedText: selectedText });
                 }
             });
 
@@ -1055,11 +1108,11 @@
                     firstName: currentFirstName,
                     lastName: currentLastName,
                     email: currentEmail,
+                    idToken: currentIdToken,
                     class: currentStudentClass,
                     set: selectedSet,
                     mcAnswers: mcArr,
                     openEnded: openArr,
-                    mcScore: mcScore,
                     penaltyPoints: penaltyPoints,
                     tabSwitches: tabSwitches
                 })
@@ -1073,7 +1126,15 @@
                         document.getElementById('duplicateScreen').style.display = 'block';
                         return;
                     }
-                    showResults(data);
+                    // Hold results until timer reaches zero
+                    var timerEl = document.getElementById('timer');
+                    var timerDone = timerEl && timerEl.textContent === '00:00';
+                    if (timerDone) {
+                        showResults(data);
+                    } else {
+                        pendingResults = data;
+                        document.getElementById('waitingMsg').textContent = 'Exam submitted! Results will appear when time is up.';
+                    }
                 })
                 .catch(function () { alert('Error connecting to server. Please contact your teacher.'); });
         }
@@ -1095,27 +1156,24 @@
             var tbody = document.getElementById('breakdownBody');
             tbody.innerHTML = '';
 
+            // Build MC feedback lookup from server response
+            var mcFbMap = {};
+            (data.mcFeedback || []).forEach(function(f) { mcFbMap[f.questionId] = f; });
+
             questions[data.set].forEach(function (q, i) {
                 var ans = answers.mc[q.id] || answers.openEnded[q.id] || 'No answer';
                 var fbText = '';
 
                 if (q.type === 'mc') {
-                    var correctDisplayIndex = q.shuffled.indexOf(q.correctIndex);
-                    var correctLetter = String.fromCharCode(65 + correctDisplayIndex);
-                    var correctText = escapeHtml(q.options[q.correctIndex]);
-
-                    if (answers.mc[q.id]) {
-                        var selIdx = answers.mc[q.id].charCodeAt(0) - 65;
-                        var isCorrect = (q.shuffled[selIdx] === q.correctIndex);
-                        var earned = isCorrect ? q.points : 0;
-                        fbText = '<span style="color:' + (isCorrect ? 'var(--success-color)' : 'var(--error-color)') + '; font-weight:bold;">' +
-                            earned + '/' + q.points + ' pts</span><br>' + (isCorrect ? '✅ Correct' : '❌ Incorrect');
-                        if (!isCorrect) {
-                            fbText += '<div style="margin-top:8px; font-size:13px; color:var(--text-muted); line-height:1.4;">Correct option was:<br><b>' + correctLetter + '. ' + correctText + '</b></div>';
+                    var fb = mcFbMap[q.id];
+                    if (fb) {
+                        fbText = '<span style="color:' + (fb.correct ? 'var(--success-color)' : 'var(--error-color)') + '; font-weight:bold;">' +
+                            fb.earned + '/' + fb.points + ' pts</span><br>' + (fb.correct ? '✅ Correct' : '❌ Incorrect');
+                        if (!fb.correct) {
+                            fbText += '<div style="margin-top:8px; font-size:13px; color:var(--text-muted); line-height:1.4;">Correct answer:<br><b>' + escapeHtml(fb.correctText) + '</b></div>';
                         }
                     } else {
-                        fbText = '<span style="color:var(--error-color); font-weight:bold;">0/' + q.points + ' pts</span><br>❌ Skipped' +
-                            '<div style="margin-top:8px; font-size:13px; color:var(--text-muted); line-height:1.4;">Correct option was:<br><b>' + correctLetter + '. ' + correctText + '</b></div>';
+                        fbText = '<span style="color:var(--error-color);">Result unavailable</span>';
                     }
                 } else {
                     var fb = (data.openFeedback || []).find(function (f) { return f.questionId === q.id; });

@@ -364,16 +364,17 @@
 
         function handleGoogleSignIn(response) {
             try {
-                var parts = response.credential.split('.');
+                var idToken = response.credential;
+                var parts   = idToken.split('.');
                 var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-                var email = payload.email || '';
-                var firstName = payload.given_name || '';
-                var lastName = payload.family_name || '';
+                var email     = payload.email      || '';
+                var firstName = payload.given_name  || '';
+                var lastName  = payload.family_name || '';
 
                 document.getElementById('signInScreen').style.display = 'none';
                 document.getElementById('loadingScreen').style.display = 'block';
 
-                loadResults(email, firstName, lastName);
+                loadResults(idToken, email, firstName, lastName);
             } catch (err) {
                 var errEl = document.getElementById('signInError');
                 errEl.textContent = 'Sign-in failed. Please refresh and try again.';
@@ -381,8 +382,11 @@
             }
         }
 
-        function loadResults(email, firstName, lastName) {
-            fetch(appsScriptUrl + '?action=myresults&email=' + encodeURIComponent(email))
+        function loadResults(idToken, email, firstName, lastName) {
+            fetch(appsScriptUrl, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'myresults', idToken: idToken })
+            })
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
                     document.getElementById('loadingScreen').style.display = 'none';
@@ -499,6 +503,14 @@
                         block.appendChild(ansBox);
                         block.appendChild(fbLabel);
                         block.appendChild(fbBox);
+
+                        if (d.type === 'mc' && !isCorrect && d.correctAnswer) {
+                            var correctBox = document.createElement('div');
+                            correctBox.style.cssText = 'margin-top:8px; font-size:13px; color:var(--muted); line-height:1.5;';
+                            correctBox.innerHTML = 'Correct answer: <strong style="color:var(--secondary);">' + escapeHtml(d.correctAnswer) + '</strong>';
+                            block.appendChild(correctBox);
+                        }
+
                         body.appendChild(block);
                     });
                 } else {
