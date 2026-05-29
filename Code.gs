@@ -12,7 +12,6 @@ var QUESTIONS_SHEET   = 'Questions';
 var CONFIG_SHEET      = 'Config';
 
 var OPEN_MAX_PER_Q = 8;
-var YGG_MAX_PER_Q  = 10;
 
 // 1-based column indices for the Submissions sheet
 var COL = {
@@ -24,32 +23,23 @@ var COL = {
   SET:          6,
   MC_SCORE:     7,
   OPEN_SCORE:   8,
-  YGG_SCORE:    9,
-  PENALTY:      10,
-  TAB_SWITCHES: 11,
-  TOTAL_SCORE:  12,
-  MAX_SCORE:    13,
-  PERCENTAGE:   14,
-  FINAL_GRADE:  15,
-  BONUS:        16,
-  OPEN_FB:      17,
-  YGG_FB:       18,
-  Q1_AI:        19,
-  Q2_AI:        20,
-  Q3_AI:        21,
-  Q4_AI:        22,
-  Q5_AI:        23,
-  Q1_OVR:       24,
-  Q2_OVR:       25,
-  Q3_OVR:       26,
-  Q4_OVR:       27,
-  Q5_OVR:       28,
-  YGG1_AI:      29,
-  YGG2_AI:      30,
-  YGG3_AI:      31,
-  YGG1_OVR:     32,
-  YGG2_OVR:     33,
-  YGG3_OVR:     34
+  PENALTY:      9,
+  TAB_SWITCHES: 10,
+  TOTAL_SCORE:  11,
+  MAX_SCORE:    12,
+  PERCENTAGE:   13,
+  FINAL_GRADE:  14,
+  OPEN_FB:      15,
+  Q1_AI:        16,
+  Q2_AI:        17,
+  Q3_AI:        18,
+  Q4_AI:        19,
+  Q5_AI:        20,
+  Q1_OVR:       21,
+  Q2_OVR:       22,
+  Q3_OVR:       23,
+  Q4_OVR:       24,
+  Q5_OVR:       25
 };
 
 // Detailed_Answers sheet — 0-based column indices
@@ -172,7 +162,7 @@ function getQuestionsResponse() {
   if (!qSheet) { qSheet = createQuestionsSheet(ss); }
   var qRows = qSheet.getDataRange().getValues();
 
-  var questions = {A: [], B: [], C: [], Yggdrasil: []};
+  var questions = {A: [], B: [], C: []};
 
   for (var r = 1; r < qRows.length; r++) {
     var row = qRows[r];
@@ -202,9 +192,7 @@ function getQuestionsResponse() {
       q.shuffled     = indices;
     }
 
-    if (set === 'Yggdrasil') {
-      questions.Yggdrasil.push(q);
-    } else if (questions[set] !== undefined) {
+    if (questions[set] !== undefined) {
       questions[set].push(q);
     }
   }
@@ -278,7 +266,6 @@ function getMyResultsResponse(email) {
       maxScore:         Number(row[COL.MAX_SCORE    - 1]) || 0,
       percentage:       Number(row[COL.PERCENTAGE   - 1]) || 0,
       finalGrade:       String(row[COL.FINAL_GRADE  - 1]),
-      bonus:            Number(row[COL.BONUS        - 1]) || 0,
       details:          []
     });
   }
@@ -374,10 +361,8 @@ function getSubmissionsResponse() {
   var data = sheet.getDataRange().getValues();
   var submissions = [];
 
-  var AI_COLS  = [COL.Q1_AI,   COL.Q2_AI,   COL.Q3_AI,   COL.Q4_AI,   COL.Q5_AI];
-  var OVR_COLS = [COL.Q1_OVR,  COL.Q2_OVR,  COL.Q3_OVR,  COL.Q4_OVR,  COL.Q5_OVR];
-  var YAI_COLS = [COL.YGG1_AI, COL.YGG2_AI, COL.YGG3_AI];
-  var YOVR_COLS= [COL.YGG1_OVR,COL.YGG2_OVR,COL.YGG3_OVR];
+  var AI_COLS  = [COL.Q1_AI,  COL.Q2_AI,  COL.Q3_AI,  COL.Q4_AI,  COL.Q5_AI];
+  var OVR_COLS = [COL.Q1_OVR, COL.Q2_OVR, COL.Q3_OVR, COL.Q4_OVR, COL.Q5_OVR];
 
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
@@ -396,17 +381,6 @@ function getSubmissionsResponse() {
           maxScore: OPEN_MAX_PER_Q
         });
       }
-    }
-
-    var yScores = [];
-    for (var yi = 0; yi < 3; yi++) {
-      var yai  = row[YAI_COLS[yi] - 1];
-      var yovr = row[YOVR_COLS[yi] - 1];
-      yScores.push({
-        aiScore:  (yai !== '' && yai !== null && yai !== undefined) ? Number(yai) : 0,
-        override: (yovr !== '' && yovr !== null && yovr !== undefined) ? Number(yovr) : null,
-        maxScore: YGG_MAX_PER_Q
-      });
     }
 
     var maxScore = Number(row[COL.MAX_SCORE - 1]) || 0;
@@ -429,10 +403,8 @@ function getSubmissionsResponse() {
       maxScore:           maxScore,
       percentage:         Number(row[COL.PERCENTAGE  - 1]) || 0,
       finalGrade:         String(row[COL.FINAL_GRADE - 1]),
-      bonus:              Number(row[COL.BONUS        - 1]) || 0,
       hasPerQuestionData: hasPerQ,
-      questionScores:     qScores,
-      yggScores:          yScores
+      questionScores:     qScores
     });
   }
 
@@ -470,9 +442,8 @@ function doPost(e) {
 // HANDLE EXAM SUBMISSION
 // ============================================================
 function handleSubmission(data) {
-  var openEnded    = data.openEnded    || [];
-  var yggAnswers   = data.yggAnswers   || [];
-  var mcAnswers    = data.mcAnswers    || [];
+  var openEnded = data.openEnded || [];
+  var mcAnswers = data.mcAnswers || [];
   var set          = data.set          || 'A';
   var mcScore      = Number(data.mcScore)       || 0;
   var penaltyPoints= Number(data.penaltyPoints) || 0;
@@ -493,26 +464,6 @@ function handleSubmission(data) {
     openFeedbackParts.push(q.questionId + ': ' + result.score + '/' + q.points + ' - ' + result.feedback);
   }
 
-  // Grade Yggdrasil
-  var yggFeedback      = [];
-  var yggAIScores      = [];
-  var yggScore         = 0;
-  var yggFeedbackParts = [];
-  var yggBonus         = 0;
-
-  for (var j = 0; j < yggAnswers.length; j++) {
-    var yq     = yggAnswers[j];
-    var yResult= {score: 0, feedback: 'Not attempted.'};
-    if (yq.text && yq.text.trim().length > 2) {
-      yResult = gradeWithGemini(yq.text, yq.rubric, yq.points);
-    }
-    yggFeedback.push({questionId: yq.questionId, score: yResult.score, maxScore: yq.points, feedback: yResult.feedback});
-    yggAIScores.push(yResult.score);
-    yggScore += yResult.score;
-    yggFeedbackParts.push(yq.questionId + ': ' + yResult.score + '/' + yq.points + ' - ' + yResult.feedback);
-    if (yResult.score >= 0.6 * yq.points) { yggBonus += 0.3; }
-  }
-
   // Calculate totals
   var mcMax   = 0;
   for (var mi = 0; mi < mcAnswers.length; mi++)  { mcMax   += mcAnswers[mi].points; }
@@ -524,10 +475,7 @@ function handleSubmission(data) {
   var scoreAfterPenalty = Math.max(0, rawScore - penaltyPoints);
   var percentage        = totalMax > 0 ? Math.round((scoreAfterPenalty / totalMax) * 100) : 0;
   var effectiveBoundaries = loadEffectiveBoundaries();
-  var baseGrade         = calculateGrade(percentage, set, effectiveBoundaries);
-  var bonus             = Math.round(yggBonus * 10) / 10;
-  var finalGradeNum     = Math.min(5.0, parseFloat(baseGrade) + bonus);
-  var finalGrade        = finalGradeNum.toFixed(1);
+  var finalGrade        = calculateGrade(percentage, set, effectiveBoundaries);
 
   var timestamp = new Date().toISOString();
 
@@ -540,18 +488,14 @@ function handleSubmission(data) {
     set:          set,
     mcScore:      mcScore,
     openScore:    totalOpenScore,
-    yggScore:     yggScore,
     penalty:      penaltyPoints,
     tabSwitches:  tabSwitches,
     scoreAfterPenalty: scoreAfterPenalty,
     maxScore:     totalMax,
     percentage:   percentage,
     finalGrade:   finalGrade,
-    bonus:        bonus,
     openFeedback: openFeedbackParts.join('\n'),
-    yggFeedback:  yggFeedbackParts.join('\n'),
-    openAIScores: openAIScores,
-    yggAIScores:  yggAIScores
+    openAIScores: openAIScores
   });
 
   writeDetailedAnswers({
@@ -563,9 +507,7 @@ function handleSubmission(data) {
     set:          set,
     mcAnswers:    mcAnswers,
     openEnded:    openEnded,
-    openFeedback: openFeedback,
-    yggAnswers:   yggAnswers,
-    yggFeedback:  yggFeedback
+    openFeedback: openFeedback
   });
 
   return ContentService
@@ -579,9 +521,7 @@ function handleSubmission(data) {
       percentage: percentage,
       finalGrade: finalGrade,
       penalty:    penaltyPoints,
-      bonus:      bonus,
-      openFeedback: openFeedback,
-      yggFeedback:  yggFeedback
+      openFeedback: openFeedback
     }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -639,25 +579,6 @@ function writeDetailedAnswers(d) {
     ]));
   }
 
-  var yggAnswers  = d.yggAnswers  || [];
-  var yggFeedback = d.yggFeedback || [];
-  for (var k = 0; k < yggAnswers.length; k++) {
-    var yq  = yggAnswers[k];
-    var yfb = null;
-    for (var yi = 0; yi < yggFeedback.length; yi++) {
-      if (yggFeedback[yi].questionId === yq.questionId) { yfb = yggFeedback[yi]; break; }
-    }
-    sheet.appendRow(base.concat([
-      yq.questionId,
-      'yggdrasil',
-      yq.questionText || '',
-      yq.text         || 'Not attempted',
-      '', '',
-      yfb ? yfb.score : 0,
-      yq.points,
-      yfb ? yfb.feedback : 'Not attempted'
-    ]));
-  }
 }
 
 // ============================================================
@@ -735,18 +656,16 @@ function writeSummaryToSheet(d) {
   if (sheet.getLastRow() === 0) {
     sheet.appendRow([
       'Timestamp','First Name','Last Name','Email','Class','Set',
-      'MC Score','Open Score','Ygg Score',
-      'Penalty','Tab Switches','Total Score','Max Score','Percentage','Final Grade','Bonus',
-      'Open Feedback','Ygg Feedback',
+      'MC Score','Open Score',
+      'Penalty','Tab Switches','Total Score','Max Score','Percentage','Final Grade',
+      'Open Feedback',
       'Q1_AI','Q2_AI','Q3_AI','Q4_AI','Q5_AI',
-      'Q1_Override','Q2_Override','Q3_Override','Q4_Override','Q5_Override',
-      'YGG1_AI','YGG2_AI','YGG3_AI',
-      'YGG1_Override','YGG2_Override','YGG3_Override'
+      'Q1_Override','Q2_Override','Q3_Override','Q4_Override','Q5_Override'
     ]);
   }
 
-  var row = new Array(34);
-  for (var x = 0; x < 34; x++) { row[x] = ''; }
+  var row = new Array(25);
+  for (var x = 0; x < 25; x++) { row[x] = ''; }
 
   row[COL.TIMESTAMP    - 1] = d.timestamp;
   row[COL.FIRST_NAME   - 1] = d.firstName;
@@ -756,25 +675,18 @@ function writeSummaryToSheet(d) {
   row[COL.SET          - 1] = d.set;
   row[COL.MC_SCORE     - 1] = d.mcScore;
   row[COL.OPEN_SCORE   - 1] = d.openScore;
-  row[COL.YGG_SCORE    - 1] = d.yggScore;
   row[COL.PENALTY      - 1] = d.penalty;
   row[COL.TAB_SWITCHES - 1] = d.tabSwitches;
   row[COL.TOTAL_SCORE  - 1] = d.scoreAfterPenalty;
   row[COL.MAX_SCORE    - 1] = d.maxScore;
   row[COL.PERCENTAGE   - 1] = d.percentage;
   row[COL.FINAL_GRADE  - 1] = d.finalGrade;
-  row[COL.BONUS        - 1] = d.bonus;
   row[COL.OPEN_FB      - 1] = d.openFeedback;
-  row[COL.YGG_FB       - 1] = d.yggFeedback;
 
-  var AI_COLS  = [COL.Q1_AI,   COL.Q2_AI,   COL.Q3_AI,   COL.Q4_AI,   COL.Q5_AI];
-  var YAI_COLS = [COL.YGG1_AI, COL.YGG2_AI, COL.YGG3_AI];
+  var AI_COLS = [COL.Q1_AI, COL.Q2_AI, COL.Q3_AI, COL.Q4_AI, COL.Q5_AI];
 
   var oScores = d.openAIScores || [];
   for (var i = 0; i < oScores.length && i < 5; i++) { row[AI_COLS[i] - 1] = oScores[i]; }
-
-  var yScores = d.yggAIScores || [];
-  for (var j = 0; j < yScores.length && j < 3; j++) { row[YAI_COLS[j] - 1] = yScores[j]; }
 
   sheet.appendRow(row);
 }
@@ -807,32 +719,23 @@ function handleOverride(data) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  var row      = allData[targetRow - 1];
-  var qScores  = data.questionScores || [];
-  var yScores  = data.yggScores      || [];
+  var row     = allData[targetRow - 1];
+  var qScores = data.questionScores || [];
 
-  var OVR_COLS = [COL.Q1_OVR,   COL.Q2_OVR,   COL.Q3_OVR,   COL.Q4_OVR,   COL.Q5_OVR];
-  var YOVR_COLS= [COL.YGG1_OVR, COL.YGG2_OVR, COL.YGG3_OVR];
+  var OVR_COLS = [COL.Q1_OVR, COL.Q2_OVR, COL.Q3_OVR, COL.Q4_OVR, COL.Q5_OVR];
 
   for (var qi = 0; qi < 5; qi++) {
     var val = (qScores[qi] !== null && qScores[qi] !== undefined) ? qScores[qi] : '';
     row[OVR_COLS[qi] - 1] = val;
     sheet.getRange(targetRow, OVR_COLS[qi]).setValue(val);
   }
-  for (var yi = 0; yi < 3; yi++) {
-    var yval = (yScores[yi] !== null && yScores[yi] !== undefined) ? yScores[yi] : '';
-    row[YOVR_COLS[yi] - 1] = yval;
-    sheet.getRange(targetRow, YOVR_COLS[yi]).setValue(yval);
-  }
 
   var updated = recalcRow(row, loadEffectiveBoundaries());
 
   sheet.getRange(targetRow, COL.OPEN_SCORE).setValue(updated.openScore);
-  sheet.getRange(targetRow, COL.YGG_SCORE).setValue(updated.yggScore);
   sheet.getRange(targetRow, COL.TOTAL_SCORE).setValue(updated.totalScore);
   sheet.getRange(targetRow, COL.PERCENTAGE).setValue(updated.percentage);
   sheet.getRange(targetRow, COL.FINAL_GRADE).setValue(updated.finalGrade);
-  sheet.getRange(targetRow, COL.BONUS).setValue(updated.bonus);
 
   return ContentService
     .createTextOutput(JSON.stringify({success: true, finalGrade: updated.finalGrade, percentage: updated.percentage}))
@@ -877,10 +780,8 @@ function recalcRow(row, boundaries) {
   var penalty  = Number(row[COL.PENALTY - 1])   || 0;
   var maxScore = Number(row[COL.MAX_SCORE - 1]) || 60;
 
-  var AI_COLS  = [COL.Q1_AI,   COL.Q2_AI,   COL.Q3_AI,   COL.Q4_AI,   COL.Q5_AI];
-  var OVR_COLS = [COL.Q1_OVR,  COL.Q2_OVR,  COL.Q3_OVR,  COL.Q4_OVR,  COL.Q5_OVR];
-  var YAI_COLS = [COL.YGG1_AI, COL.YGG2_AI, COL.YGG3_AI];
-  var YOVR_COLS= [COL.YGG1_OVR,COL.YGG2_OVR,COL.YGG3_OVR];
+  var AI_COLS  = [COL.Q1_AI,  COL.Q2_AI,  COL.Q3_AI,  COL.Q4_AI,  COL.Q5_AI];
+  var OVR_COLS = [COL.Q1_OVR, COL.Q2_OVR, COL.Q3_OVR, COL.Q4_OVR, COL.Q5_OVR];
 
   var openScore = 0;
   for (var qi = 0; qi < 5; qi++) {
@@ -892,31 +793,15 @@ function recalcRow(row, boundaries) {
     }
   }
 
-  var yggScore = 0;
-  var yggBonus = 0;
-  for (var yi = 0; yi < 3; yi++) {
-    var yai  = row[YAI_COLS[yi] - 1];
-    var yovr = row[YOVR_COLS[yi] - 1];
-    if (yai !== '' && yai !== null && yai !== undefined) {
-      var yEff = (yovr !== '' && yovr !== null && yovr !== undefined) ? Number(yovr) : Number(yai);
-      yggScore += yEff;
-      if (yEff >= 0.6 * YGG_MAX_PER_Q) { yggBonus += 0.3; }
-    }
-  }
-
-  var bonus         = Math.round(yggBonus * 10) / 10;
-  var totalScore    = Math.max(0, mcScore + openScore - penalty);
-  var percentage    = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
-  var baseGrade     = calculateGrade(percentage, set, boundaries);
-  var finalGradeNum = Math.min(5.0, parseFloat(baseGrade) + bonus);
+  var totalScore = Math.max(0, mcScore + openScore - penalty);
+  var percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  var finalGrade = calculateGrade(percentage, set, boundaries);
 
   return {
     openScore:  openScore,
-    yggScore:   yggScore,
     totalScore: totalScore,
     percentage: percentage,
-    finalGrade: finalGradeNum.toFixed(1),
-    bonus:      bonus
+    finalGrade: finalGrade
   };
 }
 
@@ -952,11 +837,9 @@ function recalculateWithOverrides() {
     var sheetRow = i + 1;
 
     sheet.getRange(sheetRow, COL.OPEN_SCORE).setValue(updated.openScore);
-    sheet.getRange(sheetRow, COL.YGG_SCORE).setValue(updated.yggScore);
     sheet.getRange(sheetRow, COL.TOTAL_SCORE).setValue(updated.totalScore);
     sheet.getRange(sheetRow, COL.PERCENTAGE).setValue(updated.percentage);
     sheet.getRange(sheetRow, COL.FINAL_GRADE).setValue(updated.finalGrade);
-    sheet.getRange(sheetRow, COL.BONUS).setValue(updated.bonus);
     changed++;
   }
 
@@ -975,8 +858,7 @@ function backfillAIScores() {
   var filled = 0;
   var regex  = /([A-Z]+_\d+):\s*(\d+)\/(\d+)/g;
 
-  var AI_COLS  = [COL.Q1_AI,   COL.Q2_AI,   COL.Q3_AI,   COL.Q4_AI,   COL.Q5_AI];
-  var YAI_COLS = [COL.YGG1_AI, COL.YGG2_AI, COL.YGG3_AI];
+  var AI_COLS = [COL.Q1_AI, COL.Q2_AI, COL.Q3_AI, COL.Q4_AI, COL.Q5_AI];
 
   for (var i = 1; i < data.length; i++) {
     var row  = data[i];
@@ -984,29 +866,17 @@ function backfillAIScores() {
     if (q1ai !== '' && q1ai !== null && q1ai !== undefined) { continue; }
 
     var openFb = String(row[COL.OPEN_FB - 1] || '');
-    var yggFb  = String(row[COL.YGG_FB  - 1] || '');
     if (!openFb) { continue; }
 
     var sheetRow = i + 1;
     var qIdx = 0;
-    var yIdx = 0;
     var match;
 
     regex.lastIndex = 0;
     while ((match = regex.exec(openFb)) !== null) {
-      var id = match[1];
-      if (id.indexOf('YGG') !== -1) { continue; }
       if (qIdx < 5) {
         sheet.getRange(sheetRow, AI_COLS[qIdx]).setValue(parseInt(match[2]));
         qIdx++;
-      }
-    }
-
-    regex.lastIndex = 0;
-    while ((match = regex.exec(yggFb)) !== null) {
-      if (yIdx < 3) {
-        sheet.getRange(sheetRow, YAI_COLS[yIdx]).setValue(parseInt(match[2]));
-        yIdx++;
       }
     }
 

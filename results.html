@@ -13,7 +13,6 @@
             --secondary: #27AE60;
             --error: #E74C3C;
             --warning: #F39C12;
-            --ygg: #8E44AD;
             --bg: #F8FAFC;
             --surface: #FFFFFF;
             --text: #0F172A;
@@ -192,11 +191,6 @@
             border-color: var(--error);
         }
 
-        .score-pill.bonus {
-            color: var(--ygg);
-            border-color: var(--ygg);
-        }
-
         /* Question breakdown */
         .question-block {
             border-left: 3px solid var(--primary);
@@ -208,10 +202,6 @@
 
         .question-block.mc {
             border-color: var(--secondary);
-        }
-
-        .question-block.yggdrasil {
-            border-color: var(--ygg);
         }
 
         .q-meta {
@@ -459,12 +449,10 @@
                     'Open: ' + s.openScore
                 ];
                 if (s.penalty > 0) { pills.push('-' + s.penalty + ' penalty'); }
-                if (s.bonus > 0) { pills.push('+' + s.bonus + ' Ygg bonus'); }
 
-                pills.forEach(function (text, pi) {
+                pills.forEach(function (text) {
                     var pill = document.createElement('span');
-                    pill.className = 'score-pill' + (pi === pills.length - 1 && s.bonus > 0 ? ' bonus' : '') +
-                        (text.indexOf('penalty') !== -1 ? ' penalty' : '');
+                    pill.className = 'score-pill' + (text.indexOf('penalty') !== -1 ? ' penalty' : '');
                     pill.textContent = text;
                     strip.appendChild(pill);
                 });
@@ -474,9 +462,9 @@
                 if (s.details && s.details.length > 0) {
                     s.details.forEach(function (d, di) {
                         var block = document.createElement('div');
-                        block.className = 'question-block ' + (d.type === 'mc' ? 'mc' : d.type === 'yggdrasil' ? 'yggdrasil' : '');
+                        block.className = 'question-block ' + (d.type === 'mc' ? 'mc' : '');
 
-                        var typeLabel = d.type === 'mc' ? 'Multiple Choice' : d.type === 'yggdrasil' ? 'Yggdrasil Challenge' : 'Open-Ended';
+                        var typeLabel = d.type === 'mc' ? 'Multiple Choice' : 'Open-Ended';
                         var scorePart = d.aiScore + ' / ' + d.maxScore + ' pts';
 
                         var meta = document.createElement('div');

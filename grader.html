@@ -13,7 +13,6 @@
             --primary-color: #1F4E78;
             --secondary-color: #27AE60;
             --accent-color: #E74C3C;
-            --yggdrasil-color: #8E44AD;
             --bg-color: #F8FAFC;
             --surface-color: #FFFFFF;
             --text-main: #0F172A;
@@ -93,17 +92,6 @@
             border-radius: 4px;
             font-size: 14px;
             color: #856404;
-        }
-
-        /* Yggdrasil */
-        .yggdrasil-header {
-            background: linear-gradient(135deg, #4A235A, #8E44AD);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 40px 0 20px 0;
-            text-align: center;
-            box-shadow: 0 4px 15px rgba(142, 68, 173, 0.3);
         }
 
         /* Exam Header */
@@ -512,13 +500,6 @@
 
             <div id="questionsContainer" class="questions-container"></div>
 
-            <div class="yggdrasil-header">
-                <h2 style="margin-bottom:5px; font-size:24px;">🌳✨ The Yggdrasil Challenge ✨🌳</h2>
-                <p style="font-size:14px; opacity:0.9;">(Optional Boss Challenge) Earn +0.3 bonus points to your final
-                    grade for every correct answer.</p>
-            </div>
-            <div id="yggdrasilContainer" class="questions-container"></div>
-
             <div style="margin-top:40px; display:flex; gap:10px;">
                 <button type="button" class="btn-primary" onclick="submitExam()" style="flex:1;">Submit Exam</button>
             </div>
@@ -554,9 +535,7 @@
                         style="background:#F0F7FF; padding:20px; border-radius:8px; text-align:center; border:1px solid var(--primary-color);">
                         <p style="color:var(--text-muted); font-size:14px; text-transform:uppercase;">Final Grade</p>
                         <h2 id="gradeDisplay" style="color:var(--secondary-color); font-size:48px; margin:5px 0;">—</h2>
-                        <p id="bonusDisplay" style="color:var(--yggdrasil-color); font-size:12px; font-weight:bold;">
-                        </p>
-                    </div>
+                        </div>
                 </div>
 
                 <h3
@@ -741,7 +720,7 @@
         let examStartTime = null;
         let tabSwitches = 0;
         let penaltyPoints = 0;
-        let answers = { mc: {}, openEnded: {}, ygg: {} };
+        let answers = { mc: {}, openEnded: {} };
 
         // --- GOOGLE SIGN-IN ---
         // Replace YOUR_GOOGLE_CLIENT_ID with your OAuth 2.0 client ID from Google Cloud Console.
@@ -892,23 +871,12 @@
             questions[selectedSet].forEach(function (q, i) {
                 container.appendChild(createQuestionCard(q, i + 1, 'openEnded'));
             });
-
-            var hasYgg = questions.Yggdrasil && questions.Yggdrasil.length > 0;
-            document.querySelector('.yggdrasil-header').style.display = hasYgg ? '' : 'none';
-            document.getElementById('yggdrasilContainer').style.display = hasYgg ? '' : 'none';
-            if (hasYgg) {
-                var yggContainer = document.getElementById('yggdrasilContainer');
-                yggContainer.innerHTML = '';
-                questions.Yggdrasil.forEach(function (q, i) {
-                    yggContainer.appendChild(createQuestionCard(q, i + 1, 'ygg'));
-                });
-            }
         }
 
         function createQuestionCard(q, num, targetDict) {
             var card = document.createElement('div');
             card.className = 'question-card';
-            var label = q.section === 'Y' ? 'Boss ' : 'Question ';
+            var label = 'Question ';
             var html = '<div class="question-number">' + label + num + '</div>' +
                 '<div class="question-text">' + escapeHtml(q.text) + '</div>';
 
@@ -1031,10 +999,6 @@
                 .filter(function (q) { return q.type === 'openEnded'; })
                 .map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.openEnded[q.id] || '', points: q.points, rubric: q.rubric }; });
 
-            var yggArr = (questions.Yggdrasil && questions.Yggdrasil.length > 0)
-                ? questions.Yggdrasil.map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.ygg[q.id] || '', points: q.points, rubric: q.rubric }; })
-                : [];
-
             fetch(appsScriptUrl, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -1045,7 +1009,6 @@
                     set: selectedSet,
                     mcAnswers: mcArr,
                     openEnded: openArr,
-                    yggAnswers: yggArr,
                     mcScore: mcScore,
                     penaltyPoints: penaltyPoints,
                     tabSwitches: tabSwitches
@@ -1068,9 +1031,6 @@
 
             if (data.penalty > 0) {
                 document.getElementById('penaltyDisplay').textContent = '(-' + data.penalty + ' Anti-Cheating Penalty Applied)';
-            }
-            if (data.bonus > 0) {
-                document.getElementById('bonusDisplay').textContent = '(+' + data.bonus + ' Yggdrasil Bonus Applied!)';
             }
 
             var tbody = document.getElementById('breakdownBody');
@@ -1107,17 +1067,6 @@
                 appendResultRow(tbody, i + 1, q.text, ans, fbText);
             });
 
-            if (questions.Yggdrasil && questions.Yggdrasil.length > 0) {
-                questions.Yggdrasil.forEach(function (q, i) {
-                    if (answers.ygg[q.id] && answers.ygg[q.id].trim().length > 2) {
-                        var fb = (data.yggFeedback || []).find(function (f) { return f.questionId === q.id; });
-                        var fbText = fb
-                            ? '<span style="color:var(--yggdrasil-color); font-weight:bold;">Boss Score: ' + fb.score + '/' + fb.maxScore + '</span><br>' + escapeHtml(fb.feedback)
-                            : '<span style="color:var(--error-color);">Feedback unavailable</span>';
-                        appendResultRow(tbody, 'Boss ' + (i + 1), q.text, answers.ygg[q.id], fbText);
-                    }
-                });
-            }
         }
 
         function appendResultRow(tbody, qNum, questionText, ansText, fbText) {

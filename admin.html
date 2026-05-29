@@ -12,7 +12,6 @@
             --secondary: #27AE60;
             --error: #E74C3C;
             --warning: #F39C12;
-            --ygg: #8E44AD;
             --bg: #F8FAFC;
             --surface: #FFFFFF;
             --text: #0F172A;
@@ -560,15 +559,13 @@
         var avgPct = Math.round(allSubmissions.reduce(function(s, r) { return s + r.percentage; }, 0) / total);
         var avgGrade = (allSubmissions.reduce(function(s, r) { return s + parseFloat(r.finalGrade) || 0; }, 0) / total).toFixed(2);
         var withPenalty = allSubmissions.filter(function(s) { return s.penalty > 0; }).length;
-        var withBonus   = allSubmissions.filter(function(s) { return s.bonus > 0; }).length;
 
         var row = document.getElementById('statsRow');
         [
-            { value: total,       label: 'Submissions' },
+            { value: total,        label: 'Submissions' },
             { value: avgPct + '%', label: 'Avg Score' },
-            { value: avgGrade,    label: 'Avg Grade' },
-            { value: withPenalty, label: 'With Penalty' },
-            { value: withBonus,   label: 'Yggdrasil Bonus' }
+            { value: avgGrade,     label: 'Avg Grade' },
+            { value: withPenalty,  label: 'With Penalty' }
         ].forEach(function(s) {
             var card = document.createElement('div');
             card.className = 'stat-card';
@@ -638,17 +635,13 @@
                 ? '<br><span class="penalty-tag">-' + s.penalty + ' penalty</span>'
                 : '';
 
-            var bonusTag = s.bonus > 0
-                ? '<br><span style="font-size:11px; color:var(--ygg); font-weight:600;">+' + s.bonus + ' Ygg</span>'
-                : '';
-
             tr.innerHTML =
                 '<td>' + escapeHtml(s.lastName) + '</td>' +
                 '<td>' + escapeHtml(s.firstName) + '</td>' +
                 '<td>' + escapeHtml(s.class) + '</td>' +
                 '<td><span class="badge badge-' + s.set + '">' + s.set + '</span></td>' +
                 '<td>' + s.percentage + '%' + penaltyTag + '</td>' +
-                '<td><span class="grade-cell">' + s.finalGrade + '</span>' + bonusTag + '</td>' +
+                '<td><span class="grade-cell">' + s.finalGrade + '</span></td>' +
                 '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(date) + '</td>' +
                 '<td></td>';
 
@@ -675,14 +668,13 @@
 
         // Summary rows
         var summaryPairs = [
-            ['Submitted',       new Date(s.timestamp).toLocaleString()],
-            ['MC Score',        s.mcScore + ' / ' + s.mcMax],
-            ['Open Score',      s.openScore + ' / ' + s.openMax],
-            ['Penalty',         s.penalty > 0 ? '-' + s.penalty + ' pts' : 'None'],
-            ['Total Score',     s.scoreAfterPenalty + ' / ' + s.maxScore],
-            ['Percentage',      s.percentage + '%'],
-            ['Yggdrasil Bonus', s.bonus > 0 ? '+' + s.bonus : 'None'],
-            ['Final Grade',     s.finalGrade]
+            ['Submitted',   new Date(s.timestamp).toLocaleString()],
+            ['MC Score',    s.mcScore + ' / ' + s.mcMax],
+            ['Open Score',  s.openScore + ' / ' + s.openMax],
+            ['Penalty',     s.penalty > 0 ? '-' + s.penalty + ' pts' : 'None'],
+            ['Total Score', s.scoreAfterPenalty + ' / ' + s.maxScore],
+            ['Percentage',  s.percentage + '%'],
+            ['Final Grade', s.finalGrade]
         ];
 
         summaryPairs.forEach(function(pair) {
@@ -733,12 +725,12 @@
                 data.details.forEach(function(d, idx) {
                     var card = document.createElement('div');
                     card.style.cssText = 'background:var(--bg); border-radius:8px; padding:14px; margin-bottom:12px; border-left:3px solid ' +
-                        (d.type === 'yggdrasil' ? 'var(--ygg)' : d.type === 'mc' ? 'var(--secondary)' : 'var(--primary)') + ';';
+                        (d.type === 'mc' ? 'var(--secondary)' : 'var(--primary)') + ';';
 
                     var qLabel = document.createElement('div');
                     qLabel.style.cssText = 'font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;';
-                    qLabel.textContent = (d.type === 'yggdrasil' ? 'Boss' : 'Question') + ' ' + (idx + 1) +
-                        ' (' + (d.type === 'mc' ? 'Multiple Choice' : d.type === 'yggdrasil' ? 'Yggdrasil' : 'Open-Ended') + ') — ' +
+                    qLabel.textContent = 'Question ' + (idx + 1) +
+                        ' (' + (d.type === 'mc' ? 'Multiple Choice' : 'Open-Ended') + ') — ' +
                         d.aiScore + '/' + d.maxScore + ' pts';
 
                     var qText = document.createElement('div');
