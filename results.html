@@ -21,7 +21,11 @@
             --border: #E2E8F0;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
             font-family: Arial, sans-serif;
@@ -36,10 +40,21 @@
             padding: 16px 24px;
         }
 
-        .topbar h1 { font-size: 20px; }
-        .topbar .sub { font-size: 13px; opacity: 0.8; margin-top: 3px; }
+        .topbar h1 {
+            font-size: 20px;
+        }
 
-        .container { max-width: 820px; margin: 0 auto; padding: 24px; }
+        .topbar .sub {
+            font-size: 13px;
+            opacity: 0.8;
+            margin-top: 3px;
+        }
+
+        .container {
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 24px;
+        }
 
         /* Sign-in */
         .signin-card {
@@ -50,16 +65,36 @@
             max-width: 440px;
             margin: 60px auto;
             text-align: center;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
         }
 
-        .signin-card .icon { font-size: 48px; margin-bottom: 16px; }
-        .signin-card h2 { color: var(--primary); margin-bottom: 8px; }
-        .signin-card p  { color: var(--muted); font-size: 14px; margin-bottom: 28px; line-height: 1.6; }
+        .signin-card .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .signin-card h2 {
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .signin-card p {
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 28px;
+            line-height: 1.6;
+        }
 
         /* State screens */
-        .state { text-align: center; margin-top: 80px; color: var(--muted); }
-        .state h2 { margin-bottom: 8px; }
+        .state {
+            text-align: center;
+            margin-top: 80px;
+            color: var(--muted);
+        }
+
+        .state h2 {
+            margin-bottom: 8px;
+        }
 
         /* Submission cards */
         .submission-card {
@@ -68,7 +103,7 @@
             border-radius: 12px;
             margin-bottom: 20px;
             overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
 
         .card-header {
@@ -81,12 +116,26 @@
             transition: background 0.15s;
         }
 
-        .card-header:hover { background: #F0F7FF; }
+        .card-header:hover {
+            background: #F0F7FF;
+        }
 
-        .card-header .left h3 { font-size: 16px; color: var(--primary); }
-        .card-header .left .meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+        .card-header .left h3 {
+            font-size: 16px;
+            color: var(--primary);
+        }
 
-        .card-header .right { display: flex; align-items: center; gap: 20px; }
+        .card-header .left .meta {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 3px;
+        }
+
+        .card-header .right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
 
         .grade-big {
             font-size: 32px;
@@ -105,7 +154,9 @@
             transition: transform 0.2s;
         }
 
-        .chevron.open { transform: rotate(180deg); }
+        .chevron.open {
+            transform: rotate(180deg);
+        }
 
         .card-body {
             display: none;
@@ -113,7 +164,9 @@
             border-top: 1px solid var(--border);
         }
 
-        .card-body.open { display: block; }
+        .card-body.open {
+            display: block;
+        }
 
         /* Score summary strip */
         .score-strip {
@@ -134,8 +187,15 @@
             color: var(--text);
         }
 
-        .score-pill.penalty { color: var(--error); border-color: var(--error); }
-        .score-pill.bonus   { color: var(--ygg);   border-color: var(--ygg);   }
+        .score-pill.penalty {
+            color: var(--error);
+            border-color: var(--error);
+        }
+
+        .score-pill.bonus {
+            color: var(--ygg);
+            border-color: var(--ygg);
+        }
 
         /* Question breakdown */
         .question-block {
@@ -146,8 +206,13 @@
             margin-bottom: 12px;
         }
 
-        .question-block.mc       { border-color: var(--secondary); }
-        .question-block.yggdrasil { border-color: var(--ygg); }
+        .question-block.mc {
+            border-color: var(--secondary);
+        }
+
+        .question-block.yggdrasil {
+            border-color: var(--ygg);
+        }
 
         .q-meta {
             font-size: 11px;
@@ -164,7 +229,11 @@
             line-height: 1.5;
         }
 
-        .q-answer-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+        .q-answer-label {
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 3px;
+        }
 
         .q-answer {
             background: white;
@@ -182,8 +251,13 @@
             color: var(--primary);
         }
 
-        .q-feedback.correct   { color: var(--secondary); }
-        .q-feedback.incorrect { color: var(--error); }
+        .q-feedback.correct {
+            color: var(--secondary);
+        }
+
+        .q-feedback.incorrect {
+            color: var(--error);
+        }
 
         .badge-set {
             display: inline-block;
@@ -192,9 +266,21 @@
             font-size: 12px;
             font-weight: 600;
         }
-        .badge-A { background: #DBEAFE; color: #1D4ED8; }
-        .badge-B { background: #D1FAE5; color: #065F46; }
-        .badge-C { background: #EDE9FE; color: #5B21B6; }
+
+        .badge-A {
+            background: #DBEAFE;
+            color: #1D4ED8;
+        }
+
+        .badge-B {
+            background: #D1FAE5;
+            color: #065F46;
+        }
+
+        .badge-C {
+            background: #EDE9FE;
+            color: #5B21B6;
+        }
     </style>
 </head>
 
@@ -246,11 +332,11 @@
     </div>
 
     <script>
-        var params       = new URLSearchParams(window.location.search);
+        var params = new URLSearchParams(window.location.search);
         var appsScriptUrl = params.get('src') || '';
 
         // Replace with your OAuth 2.0 client ID — same as grader.html
-        var GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID';
+        var GOOGLE_CLIENT_ID = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 
         if (!appsScriptUrl) {
             document.getElementById('noSourceScreen').style.display = 'block';
@@ -275,10 +361,10 @@
                 return;
             }
             google.accounts.id.initialize({
-                client_id:   GOOGLE_CLIENT_ID,
-                callback:    handleGoogleSignIn,
-                auto_select: false
-                // hd: 'yourschool.edu'
+                client_id: GOOGLE_CLIENT_ID,
+                callback: handleGoogleSignIn,
+                auto_select: false,
+                hd: 'marymount.edu.co'
             });
             google.accounts.id.renderButton(document.getElementById('signinBtn'), {
                 type: 'standard', theme: 'outline', size: 'large',
@@ -288,13 +374,13 @@
 
         function handleGoogleSignIn(response) {
             try {
-                var parts   = response.credential.split('.');
+                var parts = response.credential.split('.');
                 var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-                var email     = payload.email      || '';
-                var firstName = payload.given_name  || '';
-                var lastName  = payload.family_name || '';
+                var email = payload.email || '';
+                var firstName = payload.given_name || '';
+                var lastName = payload.family_name || '';
 
-                document.getElementById('signInScreen').style.display  = 'none';
+                document.getElementById('signInScreen').style.display = 'none';
                 document.getElementById('loadingScreen').style.display = 'block';
 
                 loadResults(email, firstName, lastName);
@@ -307,8 +393,8 @@
 
         function loadResults(email, firstName, lastName) {
             fetch(appsScriptUrl + '?action=myresults&email=' + encodeURIComponent(email))
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
                     document.getElementById('loadingScreen').style.display = 'none';
 
                     if (!data.success || !data.submissions || data.submissions.length === 0) {
@@ -318,12 +404,12 @@
                         return;
                     }
 
-                    document.getElementById('studentName').textContent  = lastName + ', ' + firstName;
+                    document.getElementById('studentName').textContent = lastName + ', ' + firstName;
                     document.getElementById('studentEmail').textContent = email;
                     renderSubmissions(data.submissions);
                     document.getElementById('resultsScreen').style.display = 'block';
                 })
-                .catch(function() {
+                .catch(function () {
                     document.getElementById('loadingScreen').style.display = 'none';
                     document.getElementById('emptyMsg').textContent = 'Could not connect to the server. Check your connection and refresh.';
                     document.getElementById('emptyScreen').style.display = 'block';
@@ -334,28 +420,28 @@
             var list = document.getElementById('submissionsList');
             list.innerHTML = '';
 
-            submissions.forEach(function(s, idx) {
+            submissions.forEach(function (s, idx) {
                 var card = document.createElement('div');
                 card.className = 'submission-card';
 
                 var date = '';
-                try { date = new Date(s.timestamp).toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
-                catch(e) { date = s.timestamp; }
+                try { date = new Date(s.timestamp).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+                catch (e) { date = s.timestamp; }
 
                 // Header
                 var header = document.createElement('div');
                 header.className = 'card-header';
                 header.innerHTML =
                     '<div class="left">' +
-                        '<h3>Exam ' + (submissions.length - idx) + ' — <span class="badge-set badge-' + s.set + '">' + s.set + '</span></h3>' +
-                        '<div class="meta">' + escapeHtml(date) + ' · Class ' + escapeHtml(s.class) + '</div>' +
+                    '<h3>Exam ' + (submissions.length - idx) + ' — <span class="badge-set badge-' + s.set + '">' + s.set + '</span></h3>' +
+                    '<div class="meta">' + escapeHtml(date) + ' · Class ' + escapeHtml(s.class) + '</div>' +
                     '</div>' +
                     '<div class="right">' +
-                        '<div>' +
-                            '<div class="grade-big">' + s.finalGrade + '</div>' +
-                            '<div class="pct-tag">' + s.percentage + '%</div>' +
-                        '</div>' +
-                        '<div class="chevron" id="chev-' + idx + '">▼</div>' +
+                    '<div>' +
+                    '<div class="grade-big">' + s.finalGrade + '</div>' +
+                    '<div class="pct-tag">' + s.percentage + '%</div>' +
+                    '</div>' +
+                    '<div class="chevron" id="chev-' + idx + '">▼</div>' +
                     '</div>';
 
                 // Body
@@ -373,12 +459,12 @@
                     'Open: ' + s.openScore
                 ];
                 if (s.penalty > 0) { pills.push('-' + s.penalty + ' penalty'); }
-                if (s.bonus   > 0) { pills.push('+' + s.bonus + ' Ygg bonus'); }
+                if (s.bonus > 0) { pills.push('+' + s.bonus + ' Ygg bonus'); }
 
-                pills.forEach(function(text, pi) {
+                pills.forEach(function (text, pi) {
                     var pill = document.createElement('span');
                     pill.className = 'score-pill' + (pi === pills.length - 1 && s.bonus > 0 ? ' bonus' : '') +
-                                     (text.indexOf('penalty') !== -1 ? ' penalty' : '');
+                        (text.indexOf('penalty') !== -1 ? ' penalty' : '');
                     pill.textContent = text;
                     strip.appendChild(pill);
                 });
@@ -386,7 +472,7 @@
 
                 // Question breakdown
                 if (s.details && s.details.length > 0) {
-                    s.details.forEach(function(d, di) {
+                    s.details.forEach(function (d, di) {
                         var block = document.createElement('div');
                         block.className = 'question-block ' + (d.type === 'mc' ? 'mc' : d.type === 'yggdrasil' ? 'yggdrasil' : '');
 
@@ -435,8 +521,8 @@
                 }
 
                 // Toggle open/close
-                header.onclick = (function(bodyEl, chevEl) {
-                    return function() {
+                header.onclick = (function (bodyEl, chevEl) {
+                    return function () {
                         var isOpen = bodyEl.classList.contains('open');
                         bodyEl.classList.toggle('open');
                         chevEl.classList.toggle('open');
