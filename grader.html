@@ -506,6 +506,18 @@
         </div>
     </div>
 
+    <!-- DUPLICATE SCREEN -->
+    <div id="duplicateScreen" style="display:none;">
+        <div class="container" style="text-align:center; margin-top:120px;">
+            <div style="font-size:64px; margin-bottom:20px;">🔒</div>
+            <h2 style="color:var(--primary-color);">Already Submitted</h2>
+            <p style="color:var(--text-muted); margin-top:14px; font-size:16px; max-width:480px; margin-left:auto; margin-right:auto;">
+                A submission for <strong id="dupeName"></strong> on Set <strong id="dupeSet"></strong> already exists.<br><br>
+                If you believe this is an error, please contact your teacher.
+            </p>
+        </div>
+    </div>
+
     <!-- WAITING SCREEN -->
     <div id="waitingScreen">
         <div class="container" style="text-align:center; margin-top:100px;">
@@ -565,6 +577,19 @@
             <p style="font-size:14px; color:var(--text-muted);">Please remain on this browser tab.</p>
             <div class="modal-buttons">
                 <button type="button" class="btn-danger" onclick="closeWarningModal()">I Understand</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="submitConfirmModal" class="modal">
+        <div class="modal-content">
+            <h2 style="color:var(--primary-color); margin-bottom:12px;">Submit Exam?</h2>
+            <p id="confirmSummary" style="font-size:15px; margin-bottom:8px;"></p>
+            <p id="confirmUnanswered" style="font-size:13px; color:var(--error-color); font-weight:600; min-height:18px;"></p>
+            <p style="font-size:13px; color:var(--text-muted); margin-top:10px;">You cannot go back or change your answers after submitting.</p>
+            <div class="modal-buttons">
+                <button type="button" onclick="closeSubmitModal()" style="background:var(--border-color); color:var(--text-main);">Cancel</button>
+                <button type="button" class="btn-primary" onclick="confirmSubmit()">Submit Now</button>
             </div>
         </div>
     </div>
@@ -962,7 +987,32 @@
         }
 
         function submitExam() {
-            if (confirm('Submit Exam? You cannot go back.')) { submitExamImmediately(); }
+            var total      = questions[selectedSet].length;
+            var unanswered = questions[selectedSet].filter(function(q) {
+                return q.type === 'mc'
+                    ? !answers.mc[q.id]
+                    : !answers.openEnded[q.id] || !answers.openEnded[q.id].trim();
+            }).length;
+
+            document.getElementById('confirmSummary').textContent =
+                currentFirstName + ' ' + currentLastName + ' — Set ' + selectedSet +
+                ' — ' + (total - unanswered) + ' / ' + total + ' questions answered.';
+
+            var unansweredEl = document.getElementById('confirmUnanswered');
+            unansweredEl.textContent = unanswered > 0
+                ? '⚠ ' + unanswered + ' question' + (unanswered > 1 ? 's' : '') + ' left unanswered.'
+                : '';
+
+            document.getElementById('submitConfirmModal').classList.add('active');
+        }
+
+        function closeSubmitModal() {
+            document.getElementById('submitConfirmModal').classList.remove('active');
+        }
+
+        function confirmSubmit() {
+            closeSubmitModal();
+            submitExamImmediately();
         }
 
         function submitExamImmediately() {
@@ -1015,7 +1065,16 @@
                 })
             })
                 .then(function (r) { return r.json(); })
-                .then(showResults)
+                .then(function (data) {
+                    if (data.duplicate) {
+                        document.getElementById('waitingScreen').classList.remove('active');
+                        document.getElementById('dupeName').textContent = currentFirstName + ' ' + currentLastName;
+                        document.getElementById('dupeSet').textContent  = selectedSet;
+                        document.getElementById('duplicateScreen').style.display = 'block';
+                        return;
+                    }
+                    showResults(data);
+                })
                 .catch(function () { alert('Error connecting to server. Please contact your teacher.'); });
         }
 

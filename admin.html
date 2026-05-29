@@ -189,8 +189,10 @@
             cursor: pointer;
         }
 
-        button.btn-close { background: var(--border); color: var(--text); }
-        button.btn-close:hover { background: #CBD5E1; }
+        button.btn-close  { background: var(--border); color: var(--text); }
+        button.btn-close:hover  { background: #CBD5E1; }
+        button.btn-delete { background: var(--error); color: white; }
+        button.btn-delete:hover { background: #c0392b; }
 
         /* Config panel */
         .config-panel {
@@ -287,6 +289,62 @@
         .save-status { font-size: 13px; margin-top: 10px; display: none; }
         .save-status.success { color: var(--secondary); display: block; }
         .save-status.error   { color: var(--error);     display: block; }
+
+        /* Password screen */
+        .password-screen {
+            display: none;
+            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+        }
+
+        .password-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 48px 40px;
+            max-width: 400px;
+            width: 92%;
+            text-align: center;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+        }
+
+        .password-card .icon { font-size: 48px; margin-bottom: 16px; }
+        .password-card h2 { color: var(--primary); margin-bottom: 8px; }
+        .password-card p  { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+
+        .password-card input[type="password"] {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 15px;
+            margin-bottom: 10px;
+        }
+
+        .password-card input[type="password"]:focus { outline: none; border-color: var(--primary); }
+
+        .password-card .pw-error {
+            color: var(--error);
+            font-size: 13px;
+            margin-bottom: 10px;
+            display: none;
+        }
+
+        .password-card button {
+            width: 100%;
+            padding: 12px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .password-card button:hover { background: #163d5e; }
     </style>
 </head>
 
@@ -305,6 +363,19 @@
 <div id="errorScreen" class="state-screen" style="display:none;">
     <h2 style="color:var(--error);">Could not load data</h2>
     <p id="errorMsg"></p>
+</div>
+
+<div id="passwordScreen" class="password-screen">
+    <div class="password-card">
+        <div class="icon">🔐</div>
+        <h2>Admin Access</h2>
+        <p>Enter the admin password to view submissions.</p>
+        <form id="passwordForm" onsubmit="submitPassword(event)">
+            <input type="password" id="passwordInput" placeholder="Password" autocomplete="current-password">
+            <p class="pw-error" id="passwordError">Incorrect password. Try again.</p>
+            <button type="submit">Enter</button>
+        </form>
+    </div>
 </div>
 
 <div id="appShell" style="display:none;">
@@ -352,6 +423,10 @@
                     <div class="config-field">
                         <label>Class Options (comma-separated)</label>
                         <input type="text" id="cfgClasses" placeholder="e.g. 10A,10B,10C">
+                    </div>
+                    <div class="config-field">
+                        <label>Admin Password</label>
+                        <input type="password" id="cfgPassword" placeholder="Leave blank for no password" autocomplete="new-password">
                     </div>
                 </div>
                 <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
@@ -405,8 +480,9 @@
         <h2 id="modalName"></h2>
         <div class="sub" id="modalSub"></div>
         <div id="modalBody"></div>
-        <div class="modal-footer">
-            <button class="btn btn-close" onclick="closeModal()">Close</button>
+        <div class="modal-footer" style="justify-content:space-between;">
+            <button class="btn btn-delete" onclick="deleteSubmission()">Delete Submission</button>
+            <button class="btn btn-close"  onclick="closeModal()">Close</button>
         </div>
     </div>
 </div>
@@ -416,7 +492,8 @@
     const appsScriptUrl = params.get('src') || '';
 
     var allSubmissions = [];
-    var currentConfig = {};
+    var currentConfig  = {};
+    var currentModalSub = null;
     var sortKey = 'lastName';
     var sortAsc = true;
 
@@ -427,33 +504,65 @@
         loadData();
     }
 
+    var pendingSubData = null;
+    var pendingCfgData = null;
+
     function loadData() {
         Promise.all([
             fetch(appsScriptUrl + '?action=submissions').then(function(r) { return r.json(); }),
             fetch(appsScriptUrl + '?action=config').then(function(r) { return r.json(); })
         ])
         .then(function(results) {
-            var subData = results[0];
-            var cfgData = results[1];
+            pendingSubData = results[0];
+            pendingCfgData = results[1];
 
             document.getElementById('loadingScreen').style.display = 'none';
 
-            if (!subData.submissions) { throw new Error('Unexpected response from server.'); }
+            if (!pendingSubData.submissions) { throw new Error('Unexpected response from server.'); }
 
-            allSubmissions = subData.submissions;
-
-            applyConfig(cfgData.config || {});
-            buildClassFilter();
-            buildStats();
-            renderTable();
-
-            document.getElementById('appShell').style.display = 'block';
+            var password = (pendingCfgData.config || {}).admin_password || '';
+            if (password) {
+                var sessionKey = 'admin_auth_' + appsScriptUrl.slice(-20);
+                if (sessionStorage.getItem(sessionKey) === btoa(password)) {
+                    renderApp();
+                } else {
+                    document.getElementById('passwordScreen').style.display = 'flex';
+                    document.getElementById('passwordInput').focus();
+                }
+            } else {
+                renderApp();
+            }
         })
         .catch(function(err) {
             document.getElementById('loadingScreen').style.display = 'none';
             document.getElementById('errorMsg').textContent = err.message;
             document.getElementById('errorScreen').style.display = 'block';
         });
+    }
+
+    function submitPassword(e) {
+        e.preventDefault();
+        var entered  = document.getElementById('passwordInput').value;
+        var password = (pendingCfgData.config || {}).admin_password || '';
+        if (entered === password) {
+            var sessionKey = 'admin_auth_' + appsScriptUrl.slice(-20);
+            sessionStorage.setItem(sessionKey, btoa(password));
+            document.getElementById('passwordScreen').style.display = 'none';
+            renderApp();
+        } else {
+            document.getElementById('passwordError').style.display = 'block';
+            document.getElementById('passwordInput').value = '';
+            document.getElementById('passwordInput').focus();
+        }
+    }
+
+    function renderApp() {
+        allSubmissions = pendingSubData.submissions;
+        applyConfig(pendingCfgData.config || {});
+        buildClassFilter();
+        buildStats();
+        renderTable();
+        document.getElementById('appShell').style.display = 'block';
     }
 
     function applyConfig(config) {
@@ -471,7 +580,8 @@
         document.getElementById('cfgTitle').value    = config.exam_title    || '';
         document.getElementById('cfgSubtitle').value = config.exam_subtitle || '';
         document.getElementById('cfgDuration').value = config.exam_duration_minutes || '';
-        document.getElementById('cfgClasses').value  = config.class_options  || '';
+        document.getElementById('cfgClasses').value   = config.class_options   || '';
+        document.getElementById('cfgPassword').value  = config.admin_password  || '';
 
         var active = config.exam_active === 'true' || config.exam_active === true;
         document.getElementById('cfgActive').checked = active;
@@ -501,7 +611,8 @@
             exam_title:             document.getElementById('cfgTitle').value.trim(),
             exam_subtitle:          document.getElementById('cfgSubtitle').value.trim(),
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
-            class_options:          document.getElementById('cfgClasses').value.trim()
+            class_options:          document.getElementById('cfgClasses').value.trim(),
+            admin_password:         document.getElementById('cfgPassword').value
         };
 
         btn.disabled = true;
@@ -553,6 +664,8 @@
     }
 
     function buildStats() {
+        var row = document.getElementById('statsRow');
+        row.innerHTML = '';
         var total = allSubmissions.length;
         if (total === 0) { return; }
 
@@ -560,7 +673,6 @@
         var avgGrade = (allSubmissions.reduce(function(s, r) { return s + parseFloat(r.finalGrade) || 0; }, 0) / total).toFixed(2);
         var withPenalty = allSubmissions.filter(function(s) { return s.penalty > 0; }).length;
 
-        var row = document.getElementById('statsRow');
         [
             { value: total,        label: 'Submissions' },
             { value: avgPct + '%', label: 'Avg Score' },
@@ -660,6 +772,7 @@
     }
 
     function openModal(s) {
+        currentModalSub = s;
         document.getElementById('modalName').textContent = s.lastName + ', ' + s.firstName;
         document.getElementById('modalSub').textContent  = 'Class ' + s.class + ' — Set ' + s.set + (s.email ? ' — ' + s.email : '');
 
@@ -722,6 +835,8 @@
                     answersSection.appendChild(none);
                     return;
                 }
+
+                var openIdx = 0;
                 data.details.forEach(function(d, idx) {
                     var card = document.createElement('div');
                     card.style.cssText = 'background:var(--bg); border-radius:8px; padding:14px; margin-bottom:12px; border-left:3px solid ' +
@@ -761,16 +876,139 @@
                     card.appendChild(ansText);
                     card.appendChild(fbLabel);
                     card.appendChild(fbText);
+
+                    if (d.type !== 'mc') {
+                        var currentOvr = (s.questionScores[openIdx] && s.questionScores[openIdx].override !== null)
+                            ? s.questionScores[openIdx].override : null;
+
+                        var ovrWrap = document.createElement('div');
+                        ovrWrap.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border);';
+
+                        var ovrLbl = document.createElement('label');
+                        ovrLbl.style.cssText = 'font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;';
+                        ovrLbl.textContent = 'Override:';
+
+                        var ovrInput = document.createElement('input');
+                        ovrInput.type = 'number';
+                        ovrInput.id = 'ovr-' + openIdx;
+                        ovrInput.min = 0;
+                        ovrInput.max = d.maxScore;
+                        ovrInput.style.cssText = 'width:64px; padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:14px; background:white;';
+                        ovrInput.placeholder = String(d.aiScore);
+                        if (currentOvr !== null) { ovrInput.value = currentOvr; }
+
+                        var maxLbl = document.createElement('span');
+                        maxLbl.style.cssText = 'font-size:12px; color:var(--muted);';
+                        maxLbl.textContent = '/ ' + d.maxScore + ' — AI gave ' + d.aiScore;
+
+                        ovrWrap.appendChild(ovrLbl);
+                        ovrWrap.appendChild(ovrInput);
+                        ovrWrap.appendChild(maxLbl);
+                        card.appendChild(ovrWrap);
+                        openIdx++;
+                    }
+
                     answersSection.appendChild(card);
                 });
+
+                if (openIdx > 0) {
+                    var saveBtn = document.createElement('button');
+                    saveBtn.id = 'overrideSaveBtn';
+                    saveBtn.className = 'btn btn-save';
+                    saveBtn.style.marginTop = '16px';
+                    saveBtn.textContent = 'Save Score Overrides';
+                    saveBtn.onclick = function() { saveOverrides(s); };
+
+                    var saveStatus = document.createElement('p');
+                    saveStatus.id = 'overrideSaveStatus';
+                    saveStatus.style.cssText = 'font-size:13px; margin-top:8px; min-height:18px;';
+
+                    answersSection.appendChild(saveBtn);
+                    answersSection.appendChild(saveStatus);
+                }
             })
             .catch(function() {
                 loadingMsg.textContent = 'Could not load answers.';
             });
     }
 
+    function saveOverrides(s) {
+        var btn    = document.getElementById('overrideSaveBtn');
+        var status = document.getElementById('overrideSaveStatus');
+
+        var scores = [];
+        for (var i = 0; i < 5; i++) {
+            var inp = document.getElementById('ovr-' + i);
+            var raw = inp ? inp.value.trim() : '';
+            scores.push(raw !== '' ? Number(raw) : null);
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        status.textContent = '';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'override', timestamp: s.timestamp, questionScores: scores })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+
+            status.style.color = 'var(--secondary)';
+            status.textContent = 'Saved — new grade: ' + data.finalGrade + ' (' + data.percentage + '%)';
+
+            for (var i = 0; i < allSubmissions.length; i++) {
+                if (allSubmissions[i].timestamp === s.timestamp) {
+                    allSubmissions[i].finalGrade  = data.finalGrade;
+                    allSubmissions[i].percentage  = data.percentage;
+                    if (data.openScore !== undefined) { allSubmissions[i].openScore = data.openScore; }
+                    break;
+                }
+            }
+            renderTable();
+        })
+        .catch(function(err) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Save failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Save Score Overrides';
+        });
+    }
+
     function closeModal() {
         document.getElementById('detailModal').classList.remove('active');
+        currentModalSub = null;
+    }
+
+    function deleteSubmission() {
+        if (!currentModalSub) { return; }
+        var s = currentModalSub;
+        if (!confirm('Delete submission for ' + s.firstName + ' ' + s.lastName + ' (Set ' + s.set + ')?\n\nThis cannot be undone and will allow the student to resubmit.')) { return; }
+
+        var btn = document.querySelector('.btn-delete');
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'deleteSubmission', timestamp: s.timestamp })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            allSubmissions = allSubmissions.filter(function(sub) { return sub.timestamp !== s.timestamp; });
+            closeModal();
+            buildStats();
+            renderTable();
+        })
+        .catch(function(err) {
+            alert('Delete failed: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = 'Delete Submission';
+        });
     }
 
     function escapeHtml(text) {

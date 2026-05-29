@@ -428,8 +428,9 @@ function shuffleIndices(arr) {
 function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
-    if (data.action === 'override')      { return handleOverride(data); }
-    if (data.action === 'updateConfig')  { return handleUpdateConfig(data); }
+    if (data.action === 'override')         { return handleOverride(data); }
+    if (data.action === 'updateConfig')     { return handleUpdateConfig(data); }
+    if (data.action === 'deleteSubmission') { return handleDelete(data); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -442,12 +443,30 @@ function doPost(e) {
 // HANDLE EXAM SUBMISSION
 // ============================================================
 function handleSubmission(data) {
-  var openEnded = data.openEnded || [];
-  var mcAnswers = data.mcAnswers || [];
-  var set          = data.set          || 'A';
+  var openEnded    = data.openEnded || [];
+  var mcAnswers    = data.mcAnswers || [];
+  var set          = data.set           || 'A';
+  var email        = String(data.email  || '').toLowerCase().trim();
   var mcScore      = Number(data.mcScore)       || 0;
   var penaltyPoints= Number(data.penaltyPoints) || 0;
   var tabSwitches  = Number(data.tabSwitches)   || 0;
+
+  // Duplicate guard — one submission per email+set
+  if (email) {
+    var ss  = SpreadsheetApp.getActiveSpreadsheet();
+    var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
+    if (sub && sub.getLastRow() > 1) {
+      var existing = sub.getDataRange().getValues();
+      for (var di = 1; di < existing.length; di++) {
+        if (String(existing[di][COL.EMAIL - 1]).toLowerCase().trim() === email &&
+            String(existing[di][COL.SET   - 1]) === set) {
+          return ContentService
+            .createTextOutput(JSON.stringify({success: false, duplicate: true}))
+            .setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+    }
+  }
 
   // Grade open-ended questions
   var openFeedback      = [];
@@ -738,7 +757,7 @@ function handleOverride(data) {
   sheet.getRange(targetRow, COL.FINAL_GRADE).setValue(updated.finalGrade);
 
   return ContentService
-    .createTextOutput(JSON.stringify({success: true, finalGrade: updated.finalGrade, percentage: updated.percentage}))
+    .createTextOutput(JSON.stringify({success: true, finalGrade: updated.finalGrade, percentage: updated.percentage, openScore: updated.openScore}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -766,6 +785,45 @@ function handleUpdateConfig(data) {
   for (var k in updates) {
     sheet.appendRow([k, String(updates[k])]);
   }
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// HANDLE DELETE SUBMISSION  (from admin.html)
+// ============================================================
+function handleDelete(data) {
+  var ts  = String(data.timestamp || '');
+  if (!ts) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'No timestamp provided'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
+  var det = ss.getSheetByName(DETAILS_SHEET);
+
+  if (sub) {
+    var subData = sub.getDataRange().getValues();
+    for (var i = subData.length - 1; i >= 1; i--) {
+      if (String(subData[i][COL.TIMESTAMP - 1]) === ts) {
+        sub.deleteRow(i + 1);
+        break;
+      }
+    }
+  }
+
+  if (det && det.getLastRow() > 1) {
+    var detData = det.getDataRange().getValues();
+    for (var j = detData.length - 1; j >= 1; j--) {
+      if (String(detData[j][DCOL.TIMESTAMP]) === ts) {
+        det.deleteRow(j + 1);
+      }
+    }
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({success: true}))
     .setMimeType(ContentService.MimeType.JSON);
@@ -906,6 +964,7 @@ function createConfigSheet(ss) {
   sheet.appendRow(['class_options',         '10A,10B,10C']);
   sheet.appendRow(['exam_duration_minutes', '60']);
   sheet.appendRow(['exam_active',           'true']);
+  sheet.appendRow(['admin_password',        '']);
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
