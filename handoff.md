@@ -1,6 +1,6 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-06-01 (session 2)_
+_Last updated: 2026-06-01 (session 3)_
 
 ---
 
@@ -20,7 +20,7 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - **Open-ended grading:** Gemini 2.5 Flash with retry logic (429/503).
 - **Results email:** HTML email sent to student's school address after submission via `MailApp`.
 - **Student results page (`results.html`):** Students can review all past submissions with AI feedback and correct MC answers.
-- **Admin panel (`admin.html`):** Password-protected. Score distribution chart, class analysis, grade override, exam settings, grade boundaries editor, question manager (add/edit/delete without touching the sheet), bulk recalculate, delete submission.
+- **Admin panel (`admin.html`):** Password-protected. Grade distribution chart (grouped by final grade per set), class analysis, MC distractor analysis, grade override, exam settings, grade boundaries editor, question manager (add/edit/delete without touching the sheet), bulk recalculate, delete submission.
 - **Question randomization and bank sampling** (`randomize_questions`, `questions_per_set`, `oe_per_set` in Config sheet) work independently.
 
 ### Accomplished in this session
@@ -36,6 +36,13 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
   - `oe_per_set = 0` added to `createConfigSheet()` defaults.
   - Admin panel ⚙ Exam Settings: new "Open-Ended per Set" number input with a hint explaining it only activates when Questions per Set > 0. Reads and saves via the existing config flow.
   - **Requires a new Apps Script deployment to take effect.**
+
+- **MC Distractor Analysis panel:** New 🎯 collapsible panel in admin panel showing, per MC question, how many students picked each option. Helps identify widespread misconceptions.
+  - Backend: `handleMcDistractors()` in `Code.gs` — reads Questions sheet for option texts and correct answer, tallies `STUDENT_ANSWER` from Detailed_Answers sheet, returns per-question option counts. Added to admin auth guard and dispatch in `doPost`.
+  - Frontend: lazy-loads on panel open, set tabs (A/B/C), horizontal colored bars per option (green = correct, red = wrong), count + percentage, hover tooltip for full option text, skipped count, Refresh button.
+  - **Requires a new Apps Script deployment to take effect.**
+
+- **Grade Distribution chart:** Replaced the old "Score Distribution" percentage-bucket chart with a "Grade Distribution" chart. X-axis now shows actual grade values (1.0, 1.7, 2.3, etc.) collected dynamically from the data and sorted numerically. Grouped bars by set. No backend changes — `finalGrade` was already in the submissions response.
 
 ---
 

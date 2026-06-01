@@ -550,7 +550,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'mcDistractors'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -569,6 +569,7 @@ function doPost(e) {
     if (data.action === 'updateConfig')     { return handleUpdateConfig(data); }
     if (data.action === 'deleteSubmission') { return handleDelete(data); }
     if (data.action === 'recalculate')      { return handleBulkRecalc(); }
+    if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -1395,6 +1396,91 @@ function handleBulkRecalc() {
 
   return ContentService
     .createTextOutput(JSON.stringify({success: true, changed: changed}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// MC DISTRACTOR ANALYSIS
+// ============================================================
+function handleMcDistractors() {
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet   = ss.getSheetByName(QUESTIONS_SHEET);
+  var detSheet = ss.getSheetByName(DETAILS_SHEET);
+
+  if (!qSheet) {
+    return ContentService
+      .createTextOutput(safeJson({success: true, questions: []}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Build question lookup preserving sheet order
+  var qData  = qSheet.getDataRange().getValues();
+  var qMap   = {};
+  var qOrder = [];
+  for (var i = 1; i < qData.length; i++) {
+    var row   = qData[i];
+    var qtype = String(row[3]).trim();
+    var id    = String(row[1]).trim();
+    if (!id || qtype !== 'mc') { continue; }
+    var opts = [
+      String(row[6]).trim(), String(row[7]).trim(),
+      String(row[8]).trim(), String(row[9]).trim()
+    ];
+    var cidx = Number(row[10]) || 0;
+    qMap[id] = {
+      set:         String(row[0]).trim(),
+      text:        String(row[5]).trim(),
+      options:     opts,
+      correctText: opts[cidx]
+    };
+    qOrder.push(id);
+  }
+
+  // Tally student answers from Detailed_Answers
+  var tallies = {};
+  var totals  = {};
+  if (detSheet && detSheet.getLastRow() > 1) {
+    var detData = detSheet.getDataRange().getValues();
+    for (var d = 1; d < detData.length; d++) {
+      var dr = detData[d];
+      if (String(dr[DCOL.TYPE]) !== 'mc') { continue; }
+      var qid = String(dr[DCOL.QUESTION_ID]);
+      if (!qMap[qid]) { continue; }
+      var ans = String(dr[DCOL.STUDENT_ANSWER]);
+      if (!tallies[qid]) { tallies[qid] = {}; totals[qid] = 0; }
+      tallies[qid][ans] = (tallies[qid][ans] || 0) + 1;
+      totals[qid]++;
+    }
+  }
+
+  // Build result in sheet order
+  var result = [];
+  for (var qi = 0; qi < qOrder.length; qi++) {
+    var qid   = qOrder[qi];
+    var q     = qMap[qid];
+    var tally = tallies[qid] || {};
+    var total = totals[qid]  || 0;
+    var optionCounts = [];
+    for (var oi = 0; oi < q.options.length; oi++) {
+      var optText = q.options[oi];
+      optionCounts.push({
+        text:    optText,
+        count:   tally[optText] || 0,
+        correct: optText === q.correctText
+      });
+    }
+    result.push({
+      questionId:   qid,
+      set:          q.set,
+      questionText: q.text,
+      options:      optionCounts,
+      total:        total,
+      noAnswer:     tally['No answer'] || 0
+    });
+  }
+
+  return ContentService
+    .createTextOutput(safeJson({success: true, questions: result}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

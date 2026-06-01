@@ -357,6 +357,84 @@
         }
 
         .password-card button:hover { background: #163d5e; }
+
+        /* Distractor analysis */
+        .distractor-block {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            border-left: 3px solid var(--primary);
+        }
+
+        .distractor-q-num {
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .distractor-q-text {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        .distractor-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 7px;
+        }
+
+        .distractor-letter {
+            width: 16px;
+            font-size: 12px;
+            font-weight: 700;
+            flex-shrink: 0;
+            text-align: center;
+        }
+
+        .distractor-bar-wrap {
+            flex: 1;
+            background: #E2E8F0;
+            border-radius: 4px;
+            height: 16px;
+            overflow: hidden;
+        }
+
+        .distractor-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.4s ease;
+            min-width: 2px;
+        }
+
+        .distractor-stat {
+            width: 72px;
+            font-size: 12px;
+            color: var(--muted);
+            flex-shrink: 0;
+            text-align: right;
+        }
+
+        .distractor-text {
+            font-size: 12px;
+            width: 220px;
+            flex-shrink: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .distractor-total {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 8px;
+            text-align: right;
+        }
     </style>
 </head>
 
@@ -405,7 +483,7 @@
 
         <div class="config-panel" id="chartPanel" style="display:none; margin-bottom:24px;">
             <div class="config-header" onclick="toggleChart()">
-                <h3>📊 Score Distribution</h3>
+                <h3>📊 Grade Distribution</h3>
                 <span id="chartChevron" style="color:var(--muted);">▲</span>
             </div>
             <div class="config-body open" id="chartBody" style="padding:16px 20px 20px;">
@@ -421,6 +499,25 @@
             </div>
             <div class="config-body open" id="analysisBody">
                 <div id="analysisContent"></div>
+            </div>
+        </div>
+
+        <div class="config-panel" id="distractorPanel" style="margin-bottom:24px;">
+            <div class="config-header" onclick="toggleDistractors()">
+                <h3>🎯 MC Distractor Analysis</h3>
+                <span id="distractorChevron" style="color:var(--muted);">▼</span>
+            </div>
+            <div class="config-body" id="distractorBody">
+                <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+                    <button id="dtab-A" class="boundary-tab active" onclick="showDistractorSet('A')">Set A</button>
+                    <button id="dtab-B" class="boundary-tab" onclick="showDistractorSet('B')">Set B</button>
+                    <button id="dtab-C" class="boundary-tab" onclick="showDistractorSet('C')">Set C</button>
+                    <button class="btn" onclick="loadDistractors()" style="margin-left:auto; background:var(--bg); color:var(--primary); border:1px solid var(--border); font-size:13px; padding:5px 12px;">Refresh</button>
+                </div>
+                <div id="dlist-A"></div>
+                <div id="dlist-B" style="display:none;"></div>
+                <div id="dlist-C" style="display:none;"></div>
+                <p id="distractorLoadMsg" style="color:var(--muted); font-size:13px; margin:0;">Open this panel to load distractor data.</p>
             </div>
         </div>
 
@@ -1293,17 +1390,25 @@
 
         var sets   = ['A', 'B', 'C'];
         var colors = { A: '#1F4E78', B: '#27AE60', C: '#E67E22' };
-        var labels = ['0-9','10-19','20-29','30-39','40-49','50-59','60-69','70-79','80-89','90+'];
 
+        // Collect unique grade values present in the data, sorted numerically
+        var gradeSet = {};
+        data.forEach(function(s) { if (s.finalGrade) { gradeSet[s.finalGrade] = true; } });
+        var labels = Object.keys(gradeSet).sort(function(a, b) { return parseFloat(a) - parseFloat(b); });
+        if (labels.length === 0) { panel.style.display = 'none'; return; }
+
+        // Count per set per grade label
         var buckets = {};
-        sets.forEach(function(s) { buckets[s] = new Array(10).fill(0); });
+        sets.forEach(function(s) {
+            buckets[s] = {};
+            labels.forEach(function(g) { buckets[s][g] = 0; });
+        });
         data.forEach(function(sub) {
-            var b = Math.min(9, Math.floor(sub.percentage / 10));
-            if (buckets[sub.set]) { buckets[sub.set][b]++; }
+            if (buckets[sub.set] && sub.finalGrade) { buckets[sub.set][sub.finalGrade]++; }
         });
 
         var activeSets = sets.filter(function(s) {
-            return buckets[s].some(function(v) { return v > 0; });
+            return labels.some(function(g) { return buckets[s][g] > 0; });
         });
 
         var legend = document.getElementById('chartLegend');
@@ -1317,7 +1422,7 @@
 
         var maxVal = 0;
         activeSets.forEach(function(s) {
-            buckets[s].forEach(function(v) { if (v > maxVal) maxVal = v; });
+            labels.forEach(function(g) { if (buckets[s][g] > maxVal) { maxVal = buckets[s][g]; } });
         });
 
         var dpr  = window.devicePixelRatio || 1;
@@ -1332,10 +1437,11 @@
         ctx.scale(dpr, dpr);
         ctx.clearRect(0, 0, cssW, cssH);
 
-        var padL = 28, padR = 8, padT = 10, padB = 36;
+        var padL = 28, padR = 8, padT = 10, padB = 28;
         var chartW = cssW - padL - padR;
         var chartH = cssH - padT - padB;
 
+        // Grid lines
         var steps = Math.min(maxVal, 5);
         for (var yi = 0; yi <= steps; yi++) {
             var yVal = Math.round((maxVal / steps) * yi);
@@ -1349,15 +1455,17 @@
             ctx.fillText(yVal, padL - 4, yPos + 3);
         }
 
-        var groupW   = chartW / 10;
+        // Bars
+        var groupW   = chartW / labels.length;
         var barW     = (groupW * 0.8) / activeSets.length;
         var groupPad = groupW * 0.1;
 
         activeSets.forEach(function(s, si) {
-            buckets[s].forEach(function(count, bi) {
-                if (count === 0) return;
+            labels.forEach(function(g, gi) {
+                var count = buckets[s][g];
+                if (count === 0) { return; }
                 var barH = (count / maxVal) * chartH;
-                var x    = padL + bi * groupW + groupPad + si * barW;
+                var x    = padL + gi * groupW + groupPad + si * barW;
                 var y    = padT + chartH - barH;
                 ctx.fillStyle = colors[s];
                 ctx.fillRect(x, y, barW - 1, barH);
@@ -1368,13 +1476,15 @@
             });
         });
 
+        // X-axis grade labels
         ctx.fillStyle  = '#94A3B8';
         ctx.font       = '10px Arial';
         ctx.textAlign  = 'center';
-        labels.forEach(function(lbl, bi) {
-            ctx.fillText(lbl + '%', padL + bi * groupW + groupW / 2, padT + chartH + 16);
+        labels.forEach(function(g, gi) {
+            ctx.fillText(g, padL + gi * groupW + groupW / 2, padT + chartH + 14);
         });
 
+        // Baseline
         ctx.strokeStyle = '#CBD5E1';
         ctx.lineWidth   = 1;
         ctx.beginPath();
@@ -1862,6 +1972,89 @@
         var a    = document.createElement('a');
         a.href = url; a.download = filename; a.click();
         URL.revokeObjectURL(url);
+    }
+
+    // --- MC DISTRACTOR ANALYSIS ---
+    var allDistractorData = [];
+
+    function toggleDistractors() {
+        var body    = document.getElementById('distractorBody');
+        var chevron = document.getElementById('distractorChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+        if (open && allDistractorData.length === 0) { loadDistractors(); }
+    }
+
+    function loadDistractors() {
+        var msg = document.getElementById('distractorLoadMsg');
+        msg.style.display = 'block';
+        msg.textContent = 'Loading...';
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'mcDistractors', adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            allDistractorData = data.questions || [];
+            renderDistractorSet('A');
+            renderDistractorSet('B');
+            renderDistractorSet('C');
+            msg.style.display = 'none';
+        })
+        .catch(function() {
+            msg.textContent = 'Failed to load distractor data.';
+        });
+    }
+
+    function showDistractorSet(s) {
+        ['A', 'B', 'C'].forEach(function(x) {
+            document.getElementById('dlist-' + x).style.display = x === s ? '' : 'none';
+            document.getElementById('dtab-' + x).classList.toggle('active', x === s);
+        });
+    }
+
+    function renderDistractorSet(s) {
+        var container = document.getElementById('dlist-' + s);
+        var qs = allDistractorData.filter(function(q) { return q.set === s; });
+
+        if (qs.length === 0) {
+            container.innerHTML = '<p style="color:var(--muted); font-size:13px; margin:0;">No MC questions found for Set ' + s + '.</p>';
+            return;
+        }
+
+        var letters = ['A', 'B', 'C', 'D'];
+        var html = '';
+
+        qs.forEach(function(q, idx) {
+            var preview = q.questionText.length > 120 ? q.questionText.slice(0, 120) + '…' : q.questionText;
+            html += '<div class="distractor-block">';
+            html += '<div class="distractor-q-num">Question ' + (idx + 1) + (q.total === 0 ? ' — no submissions yet' : '') + '</div>';
+            html += '<div class="distractor-q-text">' + escapeHtml(preview) + '</div>';
+
+            q.options.forEach(function(opt, oi) {
+                var pct      = q.total > 0 ? Math.round((opt.count / q.total) * 100) : 0;
+                var barColor = opt.correct ? 'var(--secondary)' : 'var(--error)';
+                var lblColor = opt.correct ? 'var(--secondary)' : 'var(--muted)';
+                var textStyle = opt.correct ? 'color:var(--secondary); font-weight:600;' : '';
+                var optPreview = opt.text.length > 55 ? opt.text.slice(0, 55) + '…' : opt.text;
+
+                html += '<div class="distractor-row">';
+                html += '<span class="distractor-letter" style="color:' + lblColor + ';">' + letters[oi] + '</span>';
+                html += '<div class="distractor-bar-wrap"><div class="distractor-bar" style="width:' + (pct || 0) + '%; background:' + barColor + ';"></div></div>';
+                html += '<span class="distractor-stat">' + opt.count + ' (' + pct + '%)</span>';
+                html += '<span class="distractor-text" style="' + textStyle + '" title="' + escapeHtml(opt.text) + '">' + escapeHtml(optPreview) + (opt.correct ? ' ✓' : '') + '</span>';
+                html += '</div>';
+            });
+
+            if (q.noAnswer > 0) {
+                html += '<div style="font-size:11px; color:var(--muted); margin-top:2px; padding-left:24px;">Skipped (no answer): ' + q.noAnswer + '</div>';
+            }
+
+            html += '<div class="distractor-total">' + q.total + ' total response' + (q.total !== 1 ? 's' : '') + '</div>';
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
     }
 
     function escapeHtml(text) {
