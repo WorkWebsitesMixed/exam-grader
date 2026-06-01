@@ -475,6 +475,11 @@
                         <label>Questions per Set (0 = all)</label>
                         <input type="number" id="cfgQPerSet" min="0" placeholder="0" style="width:100px;">
                     </div>
+                    <div class="config-field">
+                        <label>Open-Ended per Set (0 = no guarantee)</label>
+                        <input type="number" id="cfgOePerSet" min="0" placeholder="0" style="width:100px;">
+                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Exactly this many OE questions are drawn first; remaining slots fill with MC. Only applies when Questions per Set &gt; 0.</p>
+                    </div>
                 </div>
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px;">
                     <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
@@ -756,7 +761,8 @@
         document.getElementById('cfgClasses').value   = config.class_options   || '';
         document.getElementById('cfgPassword').value  = '';  // never pre-filled
         document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
-        document.getElementById('cfgQPerSet').value   = config.questions_per_set || '0';
+        document.getElementById('cfgQPerSet').value    = config.questions_per_set || '0';
+        document.getElementById('cfgOePerSet').value   = config.oe_per_set || '0';
 
         ['A', 'B', 'C'].forEach(function(s) {
             renderBoundaryEditor(s, config['grade_boundaries_' + s] || '');
@@ -1151,7 +1157,8 @@
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
             class_options:          document.getElementById('cfgClasses').value.trim(),
             randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
-            questions_per_set:      document.getElementById('cfgQPerSet').value.trim()
+            questions_per_set:      document.getElementById('cfgQPerSet').value.trim(),
+            oe_per_set:             document.getElementById('cfgOePerSet').value.trim()
         };
         var newPw = document.getElementById('cfgPassword').value;
         if (newPw) { updates['admin_password'] = newPw; }

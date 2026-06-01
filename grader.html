@@ -800,7 +800,9 @@
             try {
                 currentIdToken = response.credential;
                 var parts = response.credential.split('.');
-                var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+                var base64  = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                var bytes   = Uint8Array.from(atob(base64), function(c) { return c.charCodeAt(0); });
+                var payload = JSON.parse(new TextDecoder('utf-8').decode(bytes));
                 currentEmail = payload.email || '';
                 currentFirstName = payload.given_name || '';
                 currentLastName = payload.family_name || '';
@@ -883,18 +885,44 @@
             currentLastName = ln;
             currentStudentClass = cls;
 
-            document.getElementById('studentInfoScreen').classList.remove('active');
-            document.getElementById('examContainer').classList.add('active');
-            document.getElementById('setDisplay').textContent = selectedSet;
-            document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
+            var btn = document.querySelector('#studentInfoScreen button.btn-primary');
+            if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
 
-            answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
-            renderQuestions();
-            restoreAnswers();
-            examActive = true;
-            examStartTime = Date.now();
-            startTimer();
-            enableAntiCheating();
+            fetch(appsScriptUrl, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'checkDuplicate',
+                    idToken: currentIdToken,
+                    email: currentEmail,
+                    set: selectedSet
+                })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.duplicate) {
+                    document.getElementById('studentInfoScreen').classList.remove('active');
+                    document.getElementById('dupeName').textContent = fn + ' ' + ln;
+                    document.getElementById('dupeSet').textContent  = selectedSet;
+                    document.getElementById('duplicateScreen').style.display = 'block';
+                    return;
+                }
+                document.getElementById('studentInfoScreen').classList.remove('active');
+                document.getElementById('examContainer').classList.add('active');
+                document.getElementById('setDisplay').textContent = selectedSet;
+                document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
+
+                answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
+                renderQuestions();
+                restoreAnswers();
+                examActive = true;
+                examStartTime = Date.now();
+                startTimer();
+                enableAntiCheating();
+            })
+            .catch(function() {
+                if (btn) { btn.disabled = false; btn.textContent = 'I Understand — Start Exam'; }
+                alert('Could not verify with server. Check your connection and try again.');
+            });
         }
 
         function renderQuestions() {

@@ -262,16 +262,44 @@ function getQuestionsResponse() {
 
   // Question bank sampling — randomize and/or limit independently
   var questionsPerSet = parseInt(config['questions_per_set'] || '0', 10);
+  var oePerSet        = parseInt(config['oe_per_set']        || '0', 10);
   var randomizeBank   = (config['randomize_questions'] || 'false').toLowerCase() === 'true';
   ['A', 'B', 'C'].forEach(function(s) {
-    if (randomizeBank) {
-      for (var i = questions[s].length - 1; i > 0; i--) {
-        var j = Math.floor(Math.random() * (i + 1));
-        var tmp = questions[s][i]; questions[s][i] = questions[s][j]; questions[s][j] = tmp;
+    if (questionsPerSet > 0 && oePerSet > 0) {
+      // Split into typed pools, shuffle each independently if randomize is on
+      var mcPool = questions[s].filter(function(q) { return q.type === 'mc'; });
+      var oePool = questions[s].filter(function(q) { return q.type !== 'mc'; });
+      if (randomizeBank) {
+        for (var mi = mcPool.length - 1; mi > 0; mi--) {
+          var mj = Math.floor(Math.random() * (mi + 1));
+          var mt = mcPool[mi]; mcPool[mi] = mcPool[mj]; mcPool[mj] = mt;
+        }
+        for (var oi = oePool.length - 1; oi > 0; oi--) {
+          var oj = Math.floor(Math.random() * (oi + 1));
+          var ot = oePool[oi]; oePool[oi] = oePool[oj]; oePool[oj] = ot;
+        }
       }
-    }
-    if (questionsPerSet > 0 && questions[s].length > questionsPerSet) {
-      questions[s] = questions[s].slice(0, questionsPerSet);
+      var oeTake   = Math.min(oePerSet, oePool.length);
+      var mcTake   = Math.min(Math.max(0, questionsPerSet - oeTake), mcPool.length);
+      var selected = oePool.slice(0, oeTake).concat(mcPool.slice(0, mcTake));
+      // Shuffle the combined result so OE and MC are interleaved
+      if (randomizeBank) {
+        for (var si = selected.length - 1; si > 0; si--) {
+          var sj = Math.floor(Math.random() * (si + 1));
+          var st = selected[si]; selected[si] = selected[sj]; selected[sj] = st;
+        }
+      }
+      questions[s] = selected;
+    } else {
+      if (randomizeBank) {
+        for (var i = questions[s].length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = questions[s][i]; questions[s][i] = questions[s][j]; questions[s][j] = tmp;
+        }
+      }
+      if (questionsPerSet > 0 && questions[s].length > questionsPerSet) {
+        questions[s] = questions[s].slice(0, questionsPerSet);
+      }
     }
   });
 
@@ -517,8 +545,9 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
 
     // verifyAdmin does its own auth check
-    if (data.action === 'verifyAdmin') { return handleVerifyAdmin(data); }
-    if (data.action === 'myresults')   { return handleMyResults(data); }
+    if (data.action === 'verifyAdmin')     { return handleVerifyAdmin(data); }
+    if (data.action === 'myresults')       { return handleMyResults(data); }
+    if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
     var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate'];
@@ -546,6 +575,43 @@ function doPost(e) {
       .createTextOutput(JSON.stringify({success: false, error: err.message}))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ============================================================
+// HANDLE DUPLICATE CHECK  (called before exam starts)
+// ============================================================
+function handleCheckDuplicate(data) {
+  var email = String(data.email || '').toLowerCase().trim();
+  var set   = String(data.set   || '');
+
+  if (data.idToken) {
+    var tokenInfo = verifyGoogleToken(data.idToken);
+    if (tokenInfo && tokenInfo.email) { email = tokenInfo.email.toLowerCase().trim(); }
+  }
+
+  if (!email || !set) {
+    return ContentService
+      .createTextOutput(JSON.stringify({duplicate: false}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
+  if (sub && sub.getLastRow() > 1) {
+    var existing = sub.getDataRange().getValues();
+    for (var i = 1; i < existing.length; i++) {
+      if (String(existing[i][COL.EMAIL - 1]).toLowerCase().trim() === email &&
+          String(existing[i][COL.SET   - 1]) === set) {
+        return ContentService
+          .createTextOutput(JSON.stringify({duplicate: true}))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({duplicate: false}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ============================================================
@@ -1395,6 +1461,7 @@ function createConfigSheet(ss) {
   sheet.appendRow(['admin_password',        '']);
   sheet.appendRow(['randomize_questions',   'false']);
   sheet.appendRow(['questions_per_set',     '0']);
+  sheet.appendRow(['oe_per_set',            '0']);
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
