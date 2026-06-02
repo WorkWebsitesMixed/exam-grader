@@ -1,11 +1,12 @@
 // ============================================================
 // Code.gs  -  Exam Auto-Grader Backend
-// Paste this entire file into your Google Apps Script editor,
-// replace PASTE_YOUR_KEY_HERE with your Gemini API key,
-// then deploy as a new Web App version (Anyone can access).
+// Paste this entire file into your Google Apps Script editor.
+// Store your Gemini API key in Apps Script Project Settings >
+// Script Properties with key name: GEMINI_API_KEY
+// Then deploy as a new Web App version (Anyone can access).
 // ============================================================
 
-var GEMINI_API_KEY    = 'AIzaSyB5FAbnmB6h25aW85OwAr2MTM2DYIAOI6U';
+var GEMINI_API_KEY    = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '';
 var GOOGLE_CLIENT_ID  = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 var SUBMISSIONS_SHEET = 'Submissions';
 var DETAILS_SHEET     = 'Detailed_Answers';
@@ -40,7 +41,8 @@ var COL = {
   Q2_OVR:       22,
   Q3_OVR:       23,
   Q4_OVR:       24,
-  Q5_OVR:       25
+  Q5_OVR:       25,
+  EXAM_ID:      26
 };
 
 // Detailed_Answers sheet — 0-based column indices
@@ -228,6 +230,8 @@ function getQuestionsResponse() {
 
   var questions = {A: [], B: [], C: []};
 
+  var activeExamId = String(config['exam_id'] || '').trim();
+
   for (var r = 1; r < qRows.length; r++) {
     var row = qRows[r];
     var set     = String(row[0]).trim();
@@ -241,8 +245,11 @@ function getQuestionsResponse() {
     var optC    = String(row[8]).trim();
     var optD    = String(row[9]).trim();
     var rubric  = String(row[11]).trim();
+    var qExam   = String(row[12] !== undefined ? row[12] : '').trim();
 
     if (!set || !id || !text) { continue; }
+    // Empty Exam field = belongs to all exams; non-empty must match active exam_id
+    if (qExam && activeExamId && qExam !== activeExamId) { continue; }
 
     var q = {id: id, section: section, type: type, points: points, text: text, rubric: rubric};
 
@@ -518,6 +525,7 @@ function getSubmissionsResponse() {
       maxScore:           maxScore,
       percentage:         Number(row[COL.PERCENTAGE  - 1]) || 0,
       finalGrade:         String(row[COL.FINAL_GRADE - 1]),
+      examId:             String(row[COL.EXAM_ID    - 1] || ''),
       hasPerQuestionData: hasPerQ,
       questionScores:     qScores
     });
@@ -550,7 +558,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'mcDistractors'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'mcDistractors'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -569,6 +577,7 @@ function doPost(e) {
     if (data.action === 'updateConfig')     { return handleUpdateConfig(data); }
     if (data.action === 'deleteSubmission') { return handleDelete(data); }
     if (data.action === 'recalculate')      { return handleBulkRecalc(); }
+    if (data.action === 'regrademc')        { return handleRegradeAllMC(); }
     if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
     return handleSubmission(data);
   } catch (err) {
@@ -596,13 +605,29 @@ function handleCheckDuplicate(data) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Read active exam_id from Config
+  var activeExamId = '';
+  var cfgSheet = ss.getSheetByName(CONFIG_SHEET);
+  if (cfgSheet) {
+    var cfgRows = cfgSheet.getDataRange().getValues();
+    for (var ci = 0; ci < cfgRows.length; ci++) {
+      if (String(cfgRows[ci][0]).trim() === 'exam_id') {
+        activeExamId = String(cfgRows[ci][1]).trim();
+        break;
+      }
+    }
+  }
+
   var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
   if (sub && sub.getLastRow() > 1) {
     var existing = sub.getDataRange().getValues();
     for (var i = 1; i < existing.length; i++) {
+      var rowExam = String(existing[i][COL.EXAM_ID - 1] || '').trim();
       if (String(existing[i][COL.EMAIL - 1]).toLowerCase().trim() === email &&
-          String(existing[i][COL.SET   - 1]) === set) {
+          String(existing[i][COL.SET   - 1]) === set &&
+          rowExam === activeExamId) {
         return ContentService
           .createTextOutput(JSON.stringify({duplicate: true}))
           .setMimeType(ContentService.MimeType.JSON);
@@ -632,8 +657,21 @@ function handleSubmission(data) {
     if (tokenInfo && tokenInfo.email) { email = tokenInfo.email.toLowerCase().trim(); }
   }
 
-  // Load all questions for server-side grading (MC correctness + authoritative points)
+  // Read active exam_id from Config
   var ss2 = SpreadsheetApp.getActiveSpreadsheet();
+  var activeExamId = '';
+  var cfgSheet2 = ss2.getSheetByName(CONFIG_SHEET);
+  if (cfgSheet2) {
+    var cfgData2 = cfgSheet2.getDataRange().getValues();
+    for (var ci2 = 0; ci2 < cfgData2.length; ci2++) {
+      if (String(cfgData2[ci2][0]).trim() === 'exam_id') {
+        activeExamId = String(cfgData2[ci2][1]).trim();
+        break;
+      }
+    }
+  }
+
+  // Load all questions for server-side grading (MC correctness + authoritative points)
   var qSheet = ss2.getSheetByName(QUESTIONS_SHEET);
   var questionMap = {};
   if (qSheet) {
@@ -645,7 +683,7 @@ function handleSubmission(data) {
       if (!qid) { continue; }
       if (qtype === 'mc') {
         var opts = [String(qr[6]).trim(), String(qr[7]).trim(), String(qr[8]).trim(), String(qr[9]).trim()];
-        var cidx = Number(qr[10]);
+        var cidx = Number(qr[10]) - 1;  // CSV is 1-based (1=A…4=D), opts[] is 0-based
         questionMap[qid] = {type: 'mc', correctText: opts[cidx], points: Number(qr[4])};
       } else {
         questionMap[qid] = {type: qtype, points: Number(qr[4])};
@@ -669,15 +707,17 @@ function handleSubmission(data) {
     verifiedMcAnswers.push({questionId: mc.questionId, questionText: mc.questionText || '', selectedText: selectedText, correctText: correctText, correct: correct, points: mcPoints});
   }
 
-  // Duplicate guard — one submission per email+set
+  // Duplicate guard — one submission per email + set + exam
   if (email) {
     var ss  = SpreadsheetApp.getActiveSpreadsheet();
     var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
     if (sub && sub.getLastRow() > 1) {
       var existing = sub.getDataRange().getValues();
       for (var di = 1; di < existing.length; di++) {
+        var rowExam = String(existing[di][COL.EXAM_ID - 1] || '').trim();
         if (String(existing[di][COL.EMAIL - 1]).toLowerCase().trim() === email &&
-            String(existing[di][COL.SET   - 1]) === set) {
+            String(existing[di][COL.SET   - 1]) === set &&
+            rowExam === activeExamId) {
           return ContentService
             .createTextOutput(JSON.stringify({success: false, duplicate: true}))
             .setMimeType(ContentService.MimeType.JSON);
@@ -722,6 +762,7 @@ function handleSubmission(data) {
     email:        data.email || '',
     studentClass: data.class,
     set:          set,
+    examId:       activeExamId,
     mcScore:      mcScore,
     openScore:    totalOpenScore,
     penalty:      penaltyPoints,
@@ -843,13 +884,15 @@ function gradeWithGemini(studentAnswer, rubric, maxPoints) {
   }
 
   var prompt =
-    'You are a strict but fair grading assistant for a high school Design & Technology class.\n\n' +
+    'You are a strict but fair grader for a high school Design & Technology exam.\n' +
+    'Evaluate the STUDENT\'S ANSWER against the RUBRIC and award marks.\n\n' +
     'RUBRIC: ' + rubric + '\n' +
-    'STUDENT ANSWER: ' + studentAnswer + '\n' +
+    'STUDENT\'S ANSWER: ' + studentAnswer + '\n' +
     'MAX POINTS: ' + maxPoints + '\n\n' +
-    'You MUST reply with ONLY these two lines — no markdown, no extra text:\n' +
+    'Award partial marks when the rubric says to.\n' +
+    'Reply with ONLY these two lines — no markdown, no extra text, no blank lines:\n' +
     'SCORE: [integer from 0 to ' + maxPoints + ']\n' +
-    'FEEDBACK: [1-2 sentence evaluation of the student answer]';
+    'FEEDBACK: [1-2 sentences: comment directly on what this student wrote — what they got right and/or wrong]';
 
   var responseText = callGeminiAPI(prompt);
 
@@ -874,7 +917,7 @@ function callGeminiAPI(prompt) {
   var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
   var payload = JSON.stringify({
     contents: [{parts: [{text: prompt}]}],
-    generationConfig: {temperature: 0.1, maxOutputTokens: 400}
+    generationConfig: {temperature: 0.1, maxOutputTokens: 500}
   });
   var options = {method: 'post', contentType: 'application/json', payload: payload, muteHttpExceptions: true};
   var delays  = [2000, 4000, 8000];
@@ -890,12 +933,14 @@ function callGeminiAPI(prompt) {
 
     if ((code === 429 || code === 503) && attempt < delays.length) {
       Utilities.sleep(delays[attempt]);
+    } else if (code === 403) {
+      return 'SCORE: 0\nFEEDBACK: Grading unavailable (API key not configured or invalid).';
     } else {
       break;
     }
   }
 
-  return 'SCORE: 0\nFEEDBACK: Grading service error.';
+  return 'SCORE: 0\nFEEDBACK: Grading service temporarily unavailable.';
 }
 
 // ============================================================
@@ -913,12 +958,13 @@ function writeSummaryToSheet(d) {
       'Penalty','Tab Switches','Total Score','Max Score','Percentage','Final Grade',
       'Open Feedback',
       'Q1_AI','Q2_AI','Q3_AI','Q4_AI','Q5_AI',
-      'Q1_Override','Q2_Override','Q3_Override','Q4_Override','Q5_Override'
+      'Q1_Override','Q2_Override','Q3_Override','Q4_Override','Q5_Override',
+      'Exam_ID'
     ]);
   }
 
-  var row = new Array(25);
-  for (var x = 0; x < 25; x++) { row[x] = ''; }
+  var row = new Array(26);
+  for (var x = 0; x < 26; x++) { row[x] = ''; }
 
   row[COL.TIMESTAMP    - 1] = d.timestamp;
   row[COL.FIRST_NAME   - 1] = d.firstName;
@@ -940,6 +986,8 @@ function writeSummaryToSheet(d) {
 
   var oScores = d.openAIScores || [];
   for (var i = 0; i < oScores.length && i < 5; i++) { row[AI_COLS[i] - 1] = oScores[i]; }
+
+  row[COL.EXAM_ID - 1] = d.examId || '';
 
   sheet.appendRow(row);
 }
@@ -1206,7 +1254,8 @@ function getAdminQuestionsResponse() {
       optC:         String(row[8]).trim(),
       optD:         String(row[9]).trim(),
       correctIndex: (row[10] !== '' && row[10] !== null && row[10] !== undefined) ? Number(row[10]) : 0,
-      rubric:       String(row[11]).trim()
+      rubric:       String(row[11]).trim(),
+      exam:         String(row[12] !== undefined ? row[12] : '').trim()
     });
   }
   return ContentService
@@ -1232,7 +1281,8 @@ function handleAddQuestion(data) {
     String(q.optC || ''),
     String(q.optD || ''),
     q.type === 'mc' ? (Number(q.correctIndex) || 0) : '',
-    String(q.rubric || '')
+    String(q.rubric || ''),
+    String(q.exam || '')
   ]);
   return ContentService
     .createTextOutput(JSON.stringify({success: true, id: id}))
@@ -1248,7 +1298,7 @@ function handleUpdateQuestion(data) {
   var rows     = qSheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][1]).trim() === targetId) {
-      qSheet.getRange(i + 1, 1, 1, 12).setValues([[
+      qSheet.getRange(i + 1, 1, 1, 13).setValues([[
         String(q.set || rows[i][0]).toUpperCase(),
         targetId,
         String(q.section !== undefined ? q.section : rows[i][2]),
@@ -1260,7 +1310,8 @@ function handleUpdateQuestion(data) {
         String(q.optC !== undefined ? q.optC : rows[i][8]),
         String(q.optD !== undefined ? q.optD : rows[i][9]),
         (q.type || rows[i][3]) === 'mc' ? Number(q.correctIndex !== undefined ? q.correctIndex : rows[i][10]) : '',
-        String(q.rubric !== undefined ? q.rubric : rows[i][11])
+        String(q.rubric !== undefined ? q.rubric : rows[i][11]),
+        String(q.exam !== undefined ? q.exam : (rows[i][12] !== undefined ? rows[i][12] : ''))
       ]]);
       return ContentService
         .createTextOutput(JSON.stringify({success: true}))
@@ -1400,6 +1451,89 @@ function handleBulkRecalc() {
 }
 
 // ============================================================
+// REGRADE ALL MC (from admin.html)
+// ============================================================
+function handleRegradeAllMC() {
+  var ss          = SpreadsheetApp.getActiveSpreadsheet();
+  var detailSheet = ss.getSheetByName(DETAILS_SHEET);
+  var submSheet   = ss.getSheetByName(SUBMISSIONS_SHEET);
+  var qSheet      = ss.getSheetByName(QUESTIONS_SHEET);
+
+  if (!detailSheet || !submSheet || !qSheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'Required sheet not found.'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Build correct-answer map from Questions sheet
+  var questionMap = {};
+  var qData = qSheet.getDataRange().getValues();
+  for (var qi = 1; qi < qData.length; qi++) {
+    var qr = qData[qi];
+    if (String(qr[3]).trim() !== 'mc') { continue; }
+    var qid = String(qr[1]).trim();
+    if (!qid) { continue; }
+    var opts = [String(qr[6]).trim(), String(qr[7]).trim(), String(qr[8]).trim(), String(qr[9]).trim()];
+    var cidx = Number(qr[10]) - 1;
+    questionMap[qid] = {correctText: opts[cidx], points: Number(qr[4])};
+  }
+
+  // Re-grade MC rows in Detailed_Answers; tally new MC score per submission timestamp
+  var detailData  = detailSheet.getDataRange().getValues();
+  var mcScoreByTs = {};
+
+  for (var di = 1; di < detailData.length; di++) {
+    var dr = detailData[di];
+    if (String(dr[DCOL.TYPE]).trim() !== 'mc') { continue; }
+
+    var qid   = String(dr[DCOL.QUESTION_ID]).trim();
+    var qInfo = questionMap[qid];
+    if (!qInfo) { continue; }
+
+    var selectedText = String(dr[DCOL.STUDENT_ANSWER]).trim();
+    var correctText  = qInfo.correctText;
+    var maxPts       = qInfo.points;
+    var correct      = selectedText !== 'No answer' && selectedText === correctText;
+    var earned       = correct ? maxPts : 0;
+    var feedback     = correct ? 'Correct' : ('Incorrect. Correct answer: ' + correctText);
+
+    detailSheet.getRange(di + 1, DCOL.CORRECT_ANSWER + 1, 1, 4).setValues([[
+      correctText, correct ? 'TRUE' : 'FALSE', earned, feedback
+    ]]);
+
+    var ts = String(dr[DCOL.TIMESTAMP]);
+    if (!mcScoreByTs[ts]) { mcScoreByTs[ts] = 0; }
+    mcScoreByTs[ts] += earned;
+  }
+
+  // Update Submissions: new MC_SCORE then recalculate totals
+  var submData = submSheet.getDataRange().getValues();
+  var effectiveBoundaries = loadEffectiveBoundaries();
+  var changed = 0;
+
+  for (var si = 1; si < submData.length; si++) {
+    var row = submData[si];
+    var ts  = String(row[COL.TIMESTAMP - 1]);
+    if (!(ts in mcScoreByTs)) { continue; }
+
+    var newMcScore       = mcScoreByTs[ts];
+    row[COL.MC_SCORE - 1] = newMcScore;
+    var updated  = recalcRow(row, effectiveBoundaries);
+    var sheetRow = si + 1;
+
+    submSheet.getRange(sheetRow, COL.MC_SCORE).setValue(newMcScore);
+    submSheet.getRange(sheetRow, COL.TOTAL_SCORE).setValue(updated.totalScore);
+    submSheet.getRange(sheetRow, COL.PERCENTAGE).setValue(updated.percentage);
+    submSheet.getRange(sheetRow, COL.FINAL_GRADE).setValue(updated.finalGrade);
+    changed++;
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true, changed: changed}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
 // MC DISTRACTOR ANALYSIS
 // ============================================================
 function handleMcDistractors() {
@@ -1426,12 +1560,13 @@ function handleMcDistractors() {
       String(row[6]).trim(), String(row[7]).trim(),
       String(row[8]).trim(), String(row[9]).trim()
     ];
-    var cidx = Number(row[10]) || 0;
+    var cidx = Number(row[10]) - 1;  // 1-based in sheet, 0-based in array
     qMap[id] = {
       set:         String(row[0]).trim(),
       text:        String(row[5]).trim(),
       options:     opts,
-      correctText: opts[cidx]
+      correctText: opts[cidx] || '',
+      exam:        String(row[12] !== undefined ? row[12] : '').trim()
     };
     qOrder.push(id);
   }
@@ -1472,6 +1607,7 @@ function handleMcDistractors() {
     result.push({
       questionId:   qid,
       set:          q.set,
+      exam:         q.exam,
       questionText: q.text,
       options:      optionCounts,
       total:        total,
@@ -1539,6 +1675,7 @@ function setup() {
 function createConfigSheet(ss) {
   if (!ss) { ss = SpreadsheetApp.getActiveSpreadsheet(); }
   var sheet = ss.insertSheet(CONFIG_SHEET);
+  sheet.appendRow(['exam_id',               'exam_1']);
   sheet.appendRow(['exam_title',            'Exam']);
   sheet.appendRow(['exam_subtitle',         'Select your question set to begin.']);
   sheet.appendRow(['class_options',         '10A,10B,10C']);
@@ -1557,6 +1694,6 @@ function createConfigSheet(ss) {
 function createQuestionsSheet(ss) {
   if (!ss) { ss = SpreadsheetApp.getActiveSpreadsheet(); }
   var sheet = ss.insertSheet(QUESTIONS_SHEET);
-  sheet.appendRow(['Set','ID','Section','Type','Points','Text','Option_A','Option_B','Option_C','Option_D','CorrectIndex','Rubric']);
+  sheet.appendRow(['Set','ID','Section','Type','Points','Text','Option_A','Option_B','Option_C','Option_D','CorrectIndex','Rubric','Exam']);
   return sheet;
 }

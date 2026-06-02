@@ -539,6 +539,11 @@
                         </div>
                     </div>
                     <div class="config-field">
+                        <label>Exam ID</label>
+                        <input type="text" id="cfgExamId" placeholder="e.g. exam_LDR">
+                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Change this before each new exam. Students with the same email can retake when the Exam ID changes.</p>
+                    </div>
+                    <div class="config-field">
                         <label>Exam Title</label>
                         <input type="text" id="cfgTitle" placeholder="e.g. Smart Vertical Garden">
                     </div>
@@ -584,6 +589,11 @@
                         style="background:#F39C12; color:white; border:none;"
                         title="Recalculates open-ended scores, totals, percentages and grades for all submissions using current grade boundaries and any overrides.">
                         Recalculate All Grades
+                    </button>
+                    <button class="btn" id="regradeBtn" onclick="regradeAllMC()"
+                        style="background:#7C3AED; color:white; border:none;"
+                        title="Re-grades every MC answer against the current correct-answer key in the Questions sheet, then recalculates totals and final grades.">
+                        Regrade All MC
                     </button>
                     <p id="recalcStatus" style="font-size:13px; margin:0;"></p>
                 </div>
@@ -632,12 +642,17 @@
         </div>
 
         <div class="toolbar">
-            <label>Filter by class:</label>
+            <label>Exam:</label>
+            <select id="examFilter" onchange="renderTable()">
+                <option value="">All Exams</option>
+            </select>
+
+            <label>Class:</label>
             <select id="classFilter" onchange="renderTable()">
                 <option value="">All Classes</option>
             </select>
 
-            <label>Filter by set:</label>
+            <label>Set:</label>
             <select id="setFilter" onchange="renderTable()">
                 <option value="">All Sets</option>
                 <option value="A">Set A</option>
@@ -645,10 +660,19 @@
                 <option value="C">Set C</option>
             </select>
 
-            <label>Search name:</label>
-            <input type="text" id="nameSearch" placeholder="Last name..." oninput="renderTable()" style="min-width:160px;">
+            <label>From:</label>
+            <input type="date" id="dateFrom" onchange="renderTable()" style="padding:7px 10px;">
+            <label>To:</label>
+            <input type="date" id="dateTo" onchange="renderTable()" style="padding:7px 10px;">
 
-            <button class="btn btn-save" onclick="exportCSV()" style="margin-left:auto;">Export CSV</button>
+            <label>Name:</label>
+            <input type="text" id="nameSearch" placeholder="Last name..." oninput="renderTable()" style="min-width:140px;">
+
+            <button class="btn" onclick="reloadSubmissions()" id="reloadBtn"
+                style="margin-left:auto; background:var(--bg); color:var(--primary); border:1px solid var(--border);">
+                Reload
+            </button>
+            <button class="btn btn-save" onclick="exportCSV()">Export CSV</button>
         </div>
 
         <div class="table-wrap">
@@ -659,6 +683,7 @@
                         <th onclick="sortBy('firstName')">First Name <span class="sort-icon" id="sort-firstName"></span></th>
                         <th onclick="sortBy('class')">Class <span class="sort-icon" id="sort-class"></span></th>
                         <th onclick="sortBy('set')">Set <span class="sort-icon" id="sort-set"></span></th>
+                        <th onclick="sortBy('examId')">Exam <span class="sort-icon" id="sort-examId"></span></th>
                         <th onclick="sortBy('percentage')">% <span class="sort-icon" id="sort-percentage"></span></th>
                         <th onclick="sortBy('finalGrade')">Grade <span class="sort-icon" id="sort-finalGrade"></span></th>
                         <th onclick="sortBy('timestamp')">Submitted <span class="sort-icon" id="sort-timestamp"></span></th>
@@ -677,7 +702,7 @@
 <div id="questionModal" class="modal">
     <div class="modal-box" style="max-width:600px;">
         <h2 id="qModalTitle">Add Question</h2>
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
             <div>
                 <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Set</label>
                 <select id="qSet" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
@@ -685,6 +710,10 @@
                     <option value="B">B</option>
                     <option value="C">C</option>
                 </select>
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Exam</label>
+                <input type="text" id="qExam" placeholder="e.g. exam_LDR" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
             </div>
             <div>
                 <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Type</label>
@@ -780,7 +809,7 @@
 
     function loadSubmissions() {
         document.getElementById('loadingScreen').style.display = 'block';
-        fetch(appsScriptUrl, {
+        return fetch(appsScriptUrl, {
             method: 'POST',
             body: JSON.stringify({ action: 'submissions', adminPassword: getStoredAdminPassword() })
         })
@@ -852,6 +881,7 @@
         }
 
         // Populate config fields
+        document.getElementById('cfgExamId').value   = config.exam_id       || '';
         document.getElementById('cfgTitle').value    = config.exam_title    || '';
         document.getElementById('cfgSubtitle').value = config.exam_subtitle || '';
         document.getElementById('cfgDuration').value = config.exam_duration_minutes || '';
@@ -1089,6 +1119,7 @@
             '<thead><tr style="border-bottom:2px solid var(--border);">' +
             '<th style="text-align:left; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Type</th>' +
             '<th style="text-align:center; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Pts</th>' +
+            '<th style="text-align:left; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Exam</th>' +
             '<th style="text-align:left; padding:7px 10px; color:var(--muted); font-size:11px; text-transform:uppercase;">Question</th>' +
             '<th style="padding:7px 10px;"></th>' +
             '</tr></thead><tbody>';
@@ -1098,9 +1129,11 @@
             var typeColor = q.type === 'mc' ? '#1D4ED8' : '#065F46';
             var preview   = q.text.length > 80 ? q.text.slice(0, 80) + '…' : q.text;
             var rowBg     = i % 2 === 0 ? 'background:var(--bg);' : '';
+            var examLabel = q.exam || '<span style="color:var(--muted); font-style:italic;">all</span>';
             html += '<tr style="' + rowBg + '">' +
                 '<td style="padding:7px 10px;"><span style="background:' + typeBg + '; color:' + typeColor + '; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600;">' + typeLabel + '</span></td>' +
                 '<td style="padding:7px 10px; text-align:center; font-weight:600;">' + q.points + '</td>' +
+                '<td style="padding:7px 10px; font-size:12px; color:var(--muted);">' + (q.exam ? escapeHtml(q.exam) : '<em>all</em>') + '</td>' +
                 '<td style="padding:7px 10px;">' + escapeHtml(preview) + '</td>' +
                 '<td style="padding:7px 10px; white-space:nowrap;">' +
                 '<button onclick="openEditQuestion(\'' + escapeHtml(q.id) + '\')" style="background:none; border:none; cursor:pointer; color:var(--primary); font-size:16px; padding:2px 6px;" title="Edit">✏</button>' +
@@ -1138,6 +1171,7 @@
         editingQId = null;
         document.getElementById('qModalTitle').textContent = 'Add Question';
         document.getElementById('qSet').value    = currentQSet;
+        document.getElementById('qExam').value   = currentConfig.exam_id || '';
         document.getElementById('qType').value   = 'mc';
         document.getElementById('qPoints').value = '1';
         document.getElementById('qText').value   = '';
@@ -1153,6 +1187,7 @@
         editingQId = id;
         document.getElementById('qModalTitle').textContent = 'Edit Question';
         document.getElementById('qSet').value    = q.set;
+        document.getElementById('qExam').value   = q.exam || '';
         document.getElementById('qType').value   = q.type;
         document.getElementById('qPoints').value = q.points;
         document.getElementById('qText').value   = q.text;
@@ -1182,6 +1217,7 @@
         var q = {
             id:      editingQId || null,
             set:     document.getElementById('qSet').value,
+            exam:    document.getElementById('qExam').value.trim(),
             type:    qType,
             points:  qPoints,
             text:    qText,
@@ -1248,6 +1284,7 @@
         var status = document.getElementById('saveStatus');
 
         var updates = {
+            exam_id:                document.getElementById('cfgExamId').value.trim(),
             exam_active:            document.getElementById('cfgActive').checked ? 'true' : 'false',
             exam_title:             document.getElementById('cfgTitle').value.trim(),
             exam_subtitle:          document.getElementById('cfgSubtitle').value.trim(),
@@ -1257,6 +1294,7 @@
             questions_per_set:      document.getElementById('cfgQPerSet').value.trim(),
             oe_per_set:             document.getElementById('cfgOePerSet').value.trim()
         };
+        if (!updates.exam_id) { delete updates.exam_id; }  // don't blank it accidentally
         var newPw = document.getElementById('cfgPassword').value;
         if (newPw) { updates['admin_password'] = newPw; }
 
@@ -1299,14 +1337,72 @@
     }
 
     function buildClassFilter() {
+        var exams = {};
         var classes = {};
-        allSubmissions.forEach(function(s) { classes[s.class] = true; });
+        allSubmissions.forEach(function(s) {
+            if (s.examId) { exams[s.examId] = true; }
+            classes[s.class] = true;
+        });
+        // Also ensure active exam appears even if no submissions yet
+        if (currentConfig.exam_id) { exams[currentConfig.exam_id] = true; }
+
+        var examSel = document.getElementById('examFilter');
+        examSel.innerHTML = '<option value="">All Exams</option>';
+        Object.keys(exams).sort().forEach(function(e) {
+            var opt = document.createElement('option');
+            opt.value = e;
+            opt.textContent = e;
+            if (e === currentConfig.exam_id) { opt.textContent += ' (active)'; }
+            examSel.appendChild(opt);
+        });
+
         var sel = document.getElementById('classFilter');
+        sel.innerHTML = '<option value="">All Classes</option>';
         Object.keys(classes).sort().forEach(function(c) {
             var opt = document.createElement('option');
             opt.value = c;
             opt.textContent = c;
             sel.appendChild(opt);
+        });
+    }
+
+    function reloadSubmissions() {
+        var btn = document.getElementById('reloadBtn');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+        loadSubmissions().finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Reload';
+        });
+    }
+
+    function regradeAllMC() {
+        var btn    = document.getElementById('regradeBtn');
+        var status = document.getElementById('recalcStatus');
+        if (!confirm('Regrade all MC answers?\n\nThis reads the current correct-answer key from the Questions sheet and recalculates MC scores, totals, and grades for every submission. It cannot be undone.')) { return; }
+        btn.disabled = true;
+        btn.textContent = 'Regrading...';
+        status.textContent = '';
+        status.style.color = 'var(--muted)';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'regrademc', adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            status.style.color = 'var(--secondary)';
+            status.textContent = 'Done — ' + data.changed + ' submission' + (data.changed !== 1 ? 's' : '') + ' regraded.';
+            return loadSubmissions();
+        })
+        .catch(function(err) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Regrade All MC';
         });
     }
 
@@ -1606,13 +1702,25 @@
     }
 
     function getFiltered() {
+        var exam  = document.getElementById('examFilter').value;
         var cls   = document.getElementById('classFilter').value;
         var set   = document.getElementById('setFilter').value;
+        var from  = document.getElementById('dateFrom').value;
+        var to    = document.getElementById('dateTo').value;
         var query = document.getElementById('nameSearch').value.trim().toLowerCase();
 
+        var fromTs = from ? new Date(from).getTime()                        : null;
+        var toTs   = to   ? new Date(to + 'T23:59:59').getTime()            : null;
+
         return allSubmissions.filter(function(s) {
-            if (cls && s.class !== cls) { return false; }
-            if (set && s.set !== set)   { return false; }
+            if (exam && s.examId !== exam)   { return false; }
+            if (cls  && s.class  !== cls)    { return false; }
+            if (set  && s.set    !== set)    { return false; }
+            if (fromTs || toTs) {
+                var ts = new Date(s.timestamp).getTime();
+                if (fromTs && ts < fromTs)   { return false; }
+                if (toTs   && ts > toTs)     { return false; }
+            }
             if (query && s.lastName.toLowerCase().indexOf(query) === -1 &&
                          s.firstName.toLowerCase().indexOf(query) === -1) { return false; }
             return true;
@@ -1648,7 +1756,7 @@
         });
 
         // Update sort icons
-        ['lastName','firstName','class','set','percentage','finalGrade','timestamp'].forEach(function(k) {
+        ['lastName','firstName','class','set','examId','percentage','finalGrade','timestamp'].forEach(function(k) {
             var el = document.getElementById('sort-' + k);
             if (el) { el.textContent = sortKey === k ? (sortAsc ? '▲' : '▼') : ''; }
         });
@@ -1671,6 +1779,7 @@
                 '<td>' + escapeHtml(s.firstName) + '</td>' +
                 '<td>' + escapeHtml(s.class) + '</td>' +
                 '<td><span class="badge badge-' + s.set + '">' + s.set + '</span></td>' +
+                '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(s.examId || '') + '</td>' +
                 '<td>' + s.percentage + '%' + penaltyTag + '</td>' +
                 '<td><span class="grade-cell">' + s.finalGrade + '</span></td>' +
                 '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(date) + '</td>' +
