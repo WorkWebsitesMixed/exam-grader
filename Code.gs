@@ -558,7 +558,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'mcDistractors'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -578,6 +578,7 @@ function doPost(e) {
     if (data.action === 'deleteSubmission') { return handleDelete(data); }
     if (data.action === 'recalculate')      { return handleBulkRecalc(); }
     if (data.action === 'regrademc')        { return handleRegradeAllMC(); }
+    if (data.action === 'resendEmails')     { return handleResendEmails(data); }
     if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
     return handleSubmission(data);
   } catch (err) {
@@ -1447,6 +1448,108 @@ function handleBulkRecalc() {
 
   return ContentService
     .createTextOutput(JSON.stringify({success: true, changed: changed}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// RESEND RESULTS EMAILS  (from admin.html)
+// ============================================================
+function handleResendEmails(data) {
+  var examId   = String(data.examId   || '').trim();
+  var cls      = String(data.cls      || '').trim();
+  var set      = String(data.set      || '').trim();
+  var dateFrom = String(data.dateFrom || '').trim();
+  var dateTo   = String(data.dateTo   || '').trim();
+
+  var fromTs = dateFrom ? new Date(dateFrom).getTime()             : 0;
+  var toTs   = dateTo   ? new Date(dateTo + 'T23:59:59').getTime() : Infinity;
+
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var subSheet = ss.getSheetByName(SUBMISSIONS_SHEET);
+  var detSheet = ss.getSheetByName(DETAILS_SHEET);
+
+  if (!subSheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: 'No Submissions sheet.'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Build Detailed_Answers lookup keyed by timestamp
+  var detByTs = {};
+  if (detSheet && detSheet.getLastRow() > 1) {
+    var detData = detSheet.getDataRange().getValues();
+    for (var di = 1; di < detData.length; di++) {
+      var dr   = detData[di];
+      var ts   = String(dr[DCOL.TIMESTAMP]);
+      var type = String(dr[DCOL.TYPE]).trim();
+      if (!detByTs[ts]) { detByTs[ts] = {mc: [], oe: []}; }
+      if (type === 'mc') {
+        detByTs[ts].mc.push({
+          correct:      String(dr[DCOL.IS_CORRECT]).toUpperCase() === 'TRUE',
+          earned:       Number(dr[DCOL.AI_SCORE])  || 0,
+          points:       Number(dr[DCOL.MAX_SCORE])  || 0,
+          questionText: String(dr[DCOL.QUESTION_TEXT]),
+          selectedText: String(dr[DCOL.STUDENT_ANSWER]),
+          correctText:  String(dr[DCOL.CORRECT_ANSWER])
+        });
+      } else if (type === 'openEnded') {
+        detByTs[ts].oe.push({
+          score:         Number(dr[DCOL.AI_SCORE])  || 0,
+          maxScore:      Number(dr[DCOL.MAX_SCORE])  || 0,
+          questionText:  String(dr[DCOL.QUESTION_TEXT]),
+          studentAnswer: String(dr[DCOL.STUDENT_ANSWER]),
+          feedback:      String(dr[DCOL.AI_FEEDBACK])
+        });
+      }
+    }
+  }
+
+  // Filter submissions and resend
+  var subData = subSheet.getDataRange().getValues();
+  var sent = 0;
+  var errors = 0;
+
+  for (var si = 1; si < subData.length; si++) {
+    var row      = subData[si];
+    var rowTs    = String(row[COL.TIMESTAMP  - 1]);
+    var rowEmail = String(row[COL.EMAIL      - 1]).trim();
+    var rowCls   = String(row[COL.CLASS      - 1]).trim();
+    var rowSet   = String(row[COL.SET        - 1]).trim();
+    var rowExam  = String(row[COL.EXAM_ID    - 1] || '').trim();
+
+    if (!rowEmail) { continue; }
+    if (examId && rowExam !== examId) { continue; }
+    if (cls    && rowCls  !== cls)    { continue; }
+    if (set    && rowSet  !== set)    { continue; }
+    if (fromTs || toTs < Infinity) {
+      var rowTime = new Date(rowTs).getTime();
+      if (rowTime < fromTs || rowTime > toTs) { continue; }
+    }
+
+    var det = detByTs[rowTs] || {mc: [], oe: []};
+    try {
+      sendResultsEmail({
+        email:        rowEmail,
+        firstName:    String(row[COL.FIRST_NAME  - 1]),
+        lastName:     String(row[COL.LAST_NAME   - 1]),
+        set:          rowSet,
+        finalGrade:   String(row[COL.FINAL_GRADE - 1]),
+        percentage:   Number(row[COL.PERCENTAGE  - 1]) || 0,
+        totalScore:   Number(row[COL.TOTAL_SCORE - 1]) || 0,
+        maxScore:     Number(row[COL.MAX_SCORE   - 1]) || 0,
+        penalty:      Number(row[COL.PENALTY     - 1]) || 0,
+        mcFeedback:   det.mc,
+        openFeedback: det.oe
+      });
+      sent++;
+    } catch(e) {
+      errors++;
+      console.log('Resend failed for ' + rowEmail + ': ' + e.message);
+    }
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({success: true, sent: sent, errors: errors}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

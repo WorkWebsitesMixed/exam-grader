@@ -672,8 +672,14 @@
                 style="margin-left:auto; background:var(--bg); color:var(--primary); border:1px solid var(--border);">
                 Reload
             </button>
+            <button class="btn" id="resendBtn" onclick="resendEmails()"
+                style="background:#0F766E; color:white; border:none;"
+                title="Resend results emails to all students matching the current exam / class / set / date filters.">
+                Resend Emails
+            </button>
             <button class="btn btn-save" onclick="exportCSV()">Export CSV</button>
         </div>
+        <p id="resendStatus" style="font-size:13px; margin:4px 0 0 0;"></p>
 
         <div class="table-wrap">
             <table>
@@ -1403,6 +1409,83 @@
         .finally(function() {
             btn.disabled = false;
             btn.textContent = 'Regrade All MC';
+        });
+    }
+
+    function resendEmails() {
+        var exam  = document.getElementById('examFilter').value;
+        var cls   = document.getElementById('classFilter').value;
+        var set   = document.getElementById('setFilter').value;
+        var from  = document.getElementById('dateFrom').value;
+        var to    = document.getElementById('dateTo').value;
+
+        var fromTs = from ? new Date(from).getTime()             : null;
+        var toTs   = to   ? new Date(to + 'T23:59:59').getTime() : null;
+
+        // Count targets using same logic as backend (no name search)
+        var targets = allSubmissions.filter(function(s) {
+            if (exam && s.examId !== exam)  { return false; }
+            if (cls  && s.class  !== cls)   { return false; }
+            if (set  && s.set    !== set)   { return false; }
+            if (fromTs || toTs) {
+                var ts = new Date(s.timestamp).getTime();
+                if (fromTs && ts < fromTs)  { return false; }
+                if (toTs   && ts > toTs)    { return false; }
+            }
+            return true;
+        });
+
+        if (targets.length === 0) {
+            alert('No submissions match the current filters.');
+            return;
+        }
+
+        var parts = [];
+        if (exam) { parts.push('exam: ' + exam); }
+        if (cls)  { parts.push('class: ' + cls); }
+        if (set)  { parts.push('set: ' + set); }
+        if (from) { parts.push('from: ' + from); }
+        if (to)   { parts.push('to: ' + to); }
+        var filterDesc = parts.length ? ' — ' + parts.join(', ') : ' (all submissions)';
+
+        if (!confirm('Resend results emails?\n\n' + targets.length + ' student' + (targets.length !== 1 ? 's' : '') + filterDesc + '\n\nStudents will receive the email again with their current grades and feedback.')) {
+            return;
+        }
+
+        var btn    = document.getElementById('resendBtn');
+        var status = document.getElementById('resendStatus');
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        status.textContent = '';
+        status.style.color = 'var(--muted)';
+
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                action:    'resendEmails',
+                examId:    exam,
+                cls:       cls,
+                set:       set,
+                dateFrom:  from,
+                dateTo:    to,
+                adminPassword: getStoredAdminPassword()
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Unknown error'); }
+            status.style.color = 'var(--secondary)';
+            var msg = data.sent + ' email' + (data.sent !== 1 ? 's' : '') + ' sent.';
+            if (data.errors > 0) { msg += ' ' + data.errors + ' failed (check Apps Script logs).'; }
+            status.textContent = msg;
+        })
+        .catch(function(err) {
+            status.style.color = 'var(--error)';
+            status.textContent = 'Failed: ' + err.message;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Resend Emails';
         });
     }
 
