@@ -582,6 +582,46 @@
                         <input type="number" id="cfgOePerSet" min="0" placeholder="0" style="width:100px;">
                         <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Exactly this many OE questions are drawn first; remaining slots fill with MC. Only applies when Questions per Set &gt; 0.</p>
                     </div>
+                    <div class="config-field" style="grid-column: 1 / -1; margin-top:8px;">
+                        <label style="font-weight:700; font-size:13px; color:var(--primary);">Set Card Labels</label>
+                        <p style="font-size:11px; color:var(--muted); margin:4px 0 0;">Controls the title, max grade, and description shown on each set card on the exam page.</p>
+                    </div>
+                    <div class="config-field">
+                        <label>Set A — Label</label>
+                        <input type="text" id="cfgSetALabel" placeholder="e.g. SET A — Standard">
+                    </div>
+                    <div class="config-field">
+                        <label>Set A — Max Grade</label>
+                        <input type="text" id="cfgSetAMaxGrade" placeholder="e.g. 2.3" style="width:100px;">
+                    </div>
+                    <div class="config-field">
+                        <label>Set A — Description</label>
+                        <input type="text" id="cfgSetADesc" placeholder="e.g. Foundational questions.">
+                    </div>
+                    <div class="config-field">
+                        <label>Set B — Label</label>
+                        <input type="text" id="cfgSetBLabel" placeholder="e.g. SET B — Intermediate">
+                    </div>
+                    <div class="config-field">
+                        <label>Set B — Max Grade</label>
+                        <input type="text" id="cfgSetBMaxGrade" placeholder="e.g. 3.3" style="width:100px;">
+                    </div>
+                    <div class="config-field">
+                        <label>Set B — Description</label>
+                        <input type="text" id="cfgSetBDesc" placeholder="e.g. Application &amp; calculation.">
+                    </div>
+                    <div class="config-field">
+                        <label>Set C — Label</label>
+                        <input type="text" id="cfgSetCLabel" placeholder="e.g. SET C — Advanced">
+                    </div>
+                    <div class="config-field">
+                        <label>Set C — Max Grade</label>
+                        <input type="text" id="cfgSetCMaxGrade" placeholder="e.g. 4.0" style="width:100px;">
+                    </div>
+                    <div class="config-field">
+                        <label>Set C — Description</label>
+                        <input type="text" id="cfgSetCDesc" placeholder="e.g. Complex system analysis.">
+                    </div>
                 </div>
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px;">
                     <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
@@ -896,6 +936,13 @@
         document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
         document.getElementById('cfgQPerSet').value    = config.questions_per_set || '0';
         document.getElementById('cfgOePerSet').value   = config.oe_per_set || '0';
+
+        ['A', 'B', 'C'].forEach(function(s) {
+            var lower = s.toLowerCase();
+            document.getElementById('cfgSet' + s + 'Label').value    = config['set_' + lower + '_label']       || '';
+            document.getElementById('cfgSet' + s + 'MaxGrade').value = config['set_' + lower + '_max_grade']   || '';
+            document.getElementById('cfgSet' + s + 'Desc').value     = config['set_' + lower + '_description'] || '';
+        });
 
         ['A', 'B', 'C'].forEach(function(s) {
             renderBoundaryEditor(s, config['grade_boundaries_' + s] || '');
@@ -1298,7 +1345,16 @@
             class_options:          document.getElementById('cfgClasses').value.trim(),
             randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
             questions_per_set:      document.getElementById('cfgQPerSet').value.trim(),
-            oe_per_set:             document.getElementById('cfgOePerSet').value.trim()
+            oe_per_set:             document.getElementById('cfgOePerSet').value.trim(),
+            set_a_label:            document.getElementById('cfgSetALabel').value.trim(),
+            set_a_max_grade:        document.getElementById('cfgSetAMaxGrade').value.trim(),
+            set_a_description:      document.getElementById('cfgSetADesc').value.trim(),
+            set_b_label:            document.getElementById('cfgSetBLabel').value.trim(),
+            set_b_max_grade:        document.getElementById('cfgSetBMaxGrade').value.trim(),
+            set_b_description:      document.getElementById('cfgSetBDesc').value.trim(),
+            set_c_label:            document.getElementById('cfgSetCLabel').value.trim(),
+            set_c_max_grade:        document.getElementById('cfgSetCMaxGrade').value.trim(),
+            set_c_description:      document.getElementById('cfgSetCDesc').value.trim()
         };
         if (!updates.exam_id) { delete updates.exam_id; }  // don't blank it accidentally
         var newPw = document.getElementById('cfgPassword').value;

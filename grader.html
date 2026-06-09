@@ -724,6 +724,15 @@
                     if (parsed && parsed.length) { GRADE_BOUNDARIES[set] = parsed; }
                 }
             });
+            ['A', 'B', 'C'].forEach(function (set) {
+                var s = set.toLowerCase();
+                var label = config['set_' + s + '_label'];
+                var maxGrade = config['set_' + s + '_max_grade'];
+                var description = config['set_' + s + '_description'];
+                if (label)       { SET_META[set].label       = label; }
+                if (maxGrade)    { SET_META[set].maxGrade    = maxGrade; }
+                if (description !== undefined) { SET_META[set].description = description; }
+            });
         }
 
         function showLoadError(msg) {

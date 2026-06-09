@@ -1,6 +1,6 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-06-02 (session 4)_
+_Last updated: 2026-06-03 (session 5)_
 
 ---
 
@@ -16,16 +16,49 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - **Full student exam flow:** Google Sign-In (restricted to `@marymount.edu.co`) → set selection (A/B/C) with preview modal → student info form → timed exam → submission → AI grading → results screen.
 - **Anti-cheating system:** Tab switch penalties (−1pt, −3pts, auto-submit on 3rd switch). Penalty capped at 4 server-side.
 - **Timer:** Wall-clock based, persists across page refresh via `sessionStorage`. Results are held until timer hits 00:00 even if the student submits early.
-- **MC grading:** Fully server-side. `correctIndex` is never sent to the client. `CorrectIndex` in the CSV/Questions sheet is **1-based** (1=A, 2=B, 3=C, 4=D); code converts with `cidx = Number(qr[10]) - 1` before indexing into the 0-based options array.
-- **Open-ended grading:** Gemini 2.5 Flash (`gemini-2.5-flash`) with retry logic (429/503). Prompt explicitly instructs the model to award partial marks and comment directly on what the student wrote (not re-explain the concept). `maxOutputTokens: 500`.
+- **MC grading:** Fully server-side. `correctIndex` is never sent to the client. `CorrectIndex` in the Questions sheet is **1-based** (1=A, 2=B, 3=C, 4=D); code converts with `cidx = Number(qr[10]) - 1` before indexing into the 0-based options array.
+- **Open-ended grading:** Gemini 2.5 Flash (`gemini-2.5-flash`) with retry logic (429/503). Prompt explicitly instructs the model to award partial marks and comment directly on what the student wrote. `maxOutputTokens: 500`. Feedback regex captures full multi-line responses.
 - **Gemini API key:** Stored in Apps Script Script Properties under key `GEMINI_API_KEY`. Never hardcoded. Read at runtime via `PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY')`.
 - **Results email:** HTML email sent to student's school address after submission via `MailApp`.
 - **Student results page (`results.html`):** Students can review all past submissions with AI feedback and correct MC answers.
 - **Admin panel (`admin.html`):** Password-protected. Grade distribution chart, class analysis, MC distractor analysis, grade override, exam settings, grade boundaries editor, question manager, bulk recalculate, Regrade All MC, Reload submissions, delete submission.
 - **Question randomization and bank sampling** (`randomize_questions`, `questions_per_set`, `oe_per_set` in Config sheet) work independently.
-- **Duplicate guard:** `email + set` — blocks re-submission of the same set. This key will expand to `email + set + exam_id` once multi-exam support is built (see Next Features).
+- **Duplicate guard:** `email + set + exam_id` — blocks re-submission of the same set within the same exam.
 
-### Accomplished in session 4
+### Question bank — current state
+- **Source of truth:** `/home/andresforero/Documents/Marymount/10th planning/Project/Exam_Grading.csv`
+- **Set A:** 5 open-ended (A_1–A_5) + 5 MC (A_6–A_10) = 10 questions
+- **Set B:** 5 open-ended (B_1–B_5) + 5 MC (B_6–B_10) = 10 questions
+- **Set C:** 5 open-ended (C_1–C_5) + 5 MC (C_6–C_10) = 10 questions
+- **Yggdrasil:** 3 open-ended challenge questions (YGG_1–YGG_3), no MC
+- All MC `CorrectIndex` values are **1-based** (1–4). MC answer positions are distributed across all four options — correct answer is not always option A.
+- Open-ended `CorrectIndex` cells are intentionally blank.
+- To load into the system: paste CSV content into the Questions sheet, or use the admin Questions panel. The Questions sheet has a 13th column `Exam` (blank = belongs to all exams).
+
+---
+
+## 3. Session History
+
+### Session 5 (2026-06-03)
+
+#### `handleRegradeAllMC` — wrong column range (critical bug)
+- **Bug:** Regrade wrote 4 values (`correctText, isCorrect, earned, feedback`) to columns 11–14 (CORRECT_ANSWER through MAX_SCORE). This put `feedback` text into the MAX_SCORE cell, making `Number("Correct") = 0` → admin showed "4/0 pts". AI_FEEDBACK (col 15) was never touched, so it kept the stale "Incorrect. Correct answer: " string from the original broken submission.
+- **Fix:** Changed `getRange(…, 1, 4)` → `getRange(…, 1, 5)` and inserted `maxPts` as the 4th value, so the write correctly covers CORRECT_ANSWER, IS_CORRECT, AI_SCORE, MAX_SCORE, AI_FEEDBACK in one pass.
+
+#### Feedback regex — truncated at first newline
+- **Bug:** `FEEDBACK:?\s+([^\n].+)` stopped at the first `\n`, so any Gemini response that wrapped across lines was silently cut mid-sentence.
+- **Fix:** Changed to `FEEDBACK:?\s+([\s\S]+)` — captures all text after the FEEDBACK label including newlines. The fallback regex block was removed as it is now redundant.
+
+#### CorrectIndex in CSV — 0-based vs 1-based mismatch (critical bug)
+- **Bug:** `Exam_Grading.csv` had 0-based CorrectIndex values (0=A…3=D). `Code.gs` subtracts 1 (`Number(qr[10]) - 1`), expecting 1-based. CorrectIndex=0 → cidx=−1 → `opts[−1]=undefined` → blank correct answer for every MC question in Sets B and C.
+- **Fix:** All 15 MC CorrectIndex values in the CSV converted to 1-based (1=A…4=D). Values now range 1–4.
+
+#### MC answer position shuffle (Sets B and C)
+- All 10 Set B and C MC questions previously had the correct answer at Option A (CorrectIndex was 0 for all). This made it trivially easy to guess.
+- Correct answers redistributed: B set uses positions B, D, C, A, B; C set uses positions C, A, D, B, C.
+- Options reordered in the CSV to match — rubric text unchanged (references answer text, not position).
+
+### Session 4 (2026-06-02)
 
 #### API key security fix
 - Removed hardcoded Gemini API key from `Code.gs`. Key was publicly exposed in git, causing Google to revoke it (all OE grading returned 403 errors).
@@ -33,131 +66,117 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - Added explicit 403 branch in `callGeminiAPI`: returns `SCORE: 0 / FEEDBACK: Grading unavailable (API key not configured or invalid)` instead of the generic error.
 
 #### OE grading prompt improvements
-- Prompt now explicitly says "Award partial marks when the rubric says to" — fixes cases where students with a partially correct answer were receiving 0/max.
-- FEEDBACK instruction changed to "comment directly on what this student wrote — what they got right and/or wrong" — stops Gemini from re-explaining the concept instead of evaluating the answer.
-- `maxOutputTokens` raised from 400 → 500 to prevent mid-sentence truncation.
+- Prompt now explicitly says "Award partial marks when the rubric says to."
+- FEEDBACK instruction changed to "comment directly on what this student wrote — what they got right and/or wrong."
+- `maxOutputTokens` raised from 400 → 500.
 
-#### CorrectIndex off-by-one fix (critical bug)
-- **Bug:** `questionMap[qid] = {correctText: opts[cidx]}` was using the raw CSV value (1-based) as a 0-based array index, so every question's `correctText` pointed to the option one position past the correct one. CorrectIndex=4 gave `opts[4] = undefined`, so those questions could never be marked correct.
-- **Fix:** `var cidx = Number(qr[10]) - 1;` in `handleSubmission` (line ~649) and in the new `handleRegradeAllMC`.
-- This bug predated session 4; all prior MC grading was incorrect.
+#### CorrectIndex off-by-one fix in grading code
+- **Bug:** `questionMap[qid] = {correctText: opts[cidx]}` used the raw CSV value (1-based) as a 0-based index, so every `correctText` pointed one position past the correct answer. CorrectIndex=4 gave `opts[4]=undefined`.
+- **Fix:** `var cidx = Number(qr[10]) - 1;` in `handleSubmission` and `handleRegradeAllMC`.
 
-#### Question bank CSV updated
-- Removed 4 questions about thermistor and trimmer: `C_MC04` (NTC definition), `C_MC08` (trimmer purpose), `C_MC12` (trimmer resistance effect), `C_OE03` (NTC thermistor OE).
-- Filled in `CorrectIndex` (1-based) for all 19 remaining MC questions.
-- File: `/home/andresforero/Documents/Marymount/10th planning/Project/Exam Grading - Questions.csv`
+#### Admin panel additions
+- **Regrade All MC button** (purple, ⚙ Settings panel) → `action: 'regrademc'` → `handleRegradeAllMC()`. Re-reads question key, updates Detailed_Answers, recalculates totals.
+- **Reload button** (toolbar) → `loadSubmissions()` without page refresh.
+- `loadSubmissions()` now returns its promise (missing `return` was breaking `.finally`).
+- "Open-Ended per Set" input wired into `applyConfig()` and `saveConfig()`.
+- MC Distractor Analysis panel (set tabs, lazy load, horizontal bars, green=correct/red=wrong).
+- Grade Distribution chart: x-axis sorted numerically, grouped bars by set.
 
-#### Admin panel — Regrade All MC button
-- Purple button next to "Recalculate All Grades" in the ⚙ Exam Settings panel.
-- Calls `action: 'regrademc'` → `handleRegradeAllMC()` in `Code.gs`.
-- Reads current correct-answer key from Questions sheet, re-evaluates every MC row in Detailed_Answers (updates `Correct_Answer`, `Is_Correct`, `AI_Score`, `AI_Feedback` columns), tallies new MC score per submission (matched by timestamp), writes new `MC_SCORE` to Submissions, then runs `recalcRow` to update `Total_Score`, `Percentage`, `Final_Grade`.
-- Shows confirmation dialog, disables button while running, reports count of regraded submissions, reloads the table when done.
-
-#### Admin panel — Reload button
-- Small secondary button in the submissions toolbar, left of "Export CSV".
-- Calls `loadSubmissions()` without a full page refresh — useful after regrading or when new submissions come in during an exam session.
-- Fixed `loadSubmissions()` to `return` its promise (was missing), so `.finally` works correctly in both Reload and Regrade flows.
+#### `grader.html`
+- `startExam()` is async: POSTs `checkDuplicate` before showing questions; shows duplicate screen immediately on match.
 
 ---
 
-## 3. Open Tasks
+## 4. Open Tasks
 
 ### Immediate
-- [ ] **Deploy new Code.gs version** — API key fix, CorrectIndex fix, `handleRegradeAllMC`, and `regrademc` action all require a new web app deployment (Deploy → Manage deployments → New version).
+- [ ] **Deploy updated Code.gs** (session 5 fixes) — `handleRegradeAllMC` column fix and feedback regex fix require a new web app version (Deploy → Manage deployments → New version). After deploying, run **Regrade All MC** on existing submissions to correct the MAX_SCORE and AI_FEEDBACK columns.
 
 ### In progress / agreed but not yet built
 
 #### Resend Results Emails button
-- **Agreed design:** Button in the submissions toolbar. Respects the current class, set, and **date** filters (date filter to be added alongside this feature). Shows "Send X emails?" confirmation before firing.
-- Backend: new `action: 'resendEmails'` → reads Submissions + Detailed_Answers, reconstructs the same HTML email body used at submission time, calls `MailApp` for each filtered row.
-- MailApp quota: 100/day (free Gmail), 1500/day (Workspace). Confirm dialog should show the count so the teacher is aware.
-- Not yet implemented.
+- **Agreed design:** Button in the submissions toolbar. Respects current class, set, and date filters. Shows "Send X emails?" confirmation before firing.
+- Backend: `action: 'resendEmails'` → reads Submissions + Detailed_Answers, reconstructs HTML email, calls `MailApp` per row.
+- MailApp quota: 100/day (free Gmail), 1500/day (Workspace). Confirm dialog should show count.
+- Already implemented in `Code.gs` (`handleResendEmails`) but not yet wired to a button in `admin.html`.
 
 #### Multi-exam support (Option A — single spreadsheet)
 **Architecture decided:**
 - Add `exam_id` config key (e.g. `exam_LDR`, `exam_transistors`). Teacher changes this in ⚙ Exam Settings before each new exam.
-- Add `Exam` column to Questions sheet — questions are filtered by the active `exam_id` when serving to students.
-- Add `EXAM_ID` column to Submissions sheet — all new submissions tagged with the active `exam_id`.
-- Duplicate guard changes from `email + set` to `email + set + exam_id`.
-- Admin panel gets an Exam filter (alongside class/set). Stats (chart, class analysis, distractor analysis) respect the active exam filter. Old submissions stay visible but filtered.
-- Sets A/B/C remain independent per exam (Exam 1 has its own A/B/C, Exam 2 has its own A/B/C).
-- One URL for students all term — teacher just changes `exam_id` in Config between exams.
-- **Not yet implemented.** This is the next major feature to build.
+- Add `Exam` column to Questions sheet (already exists) — questions are filtered by active `exam_id`.
+- `EXAM_ID` column already in Submissions sheet.
+- Duplicate guard already uses `email + set + exam_id`.
+- Admin panel needs an Exam filter (alongside class/set). Stats should respect it.
+- Sets A/B/C remain independent per exam.
+- **Not yet implemented** (admin filter side).
 
 ### Known pending features / bugs
-- [ ] **Sets A and B have no questions yet** — question bank only has Set C data. Sets A and B need questions added via the admin Questions panel or directly in the sheet.
-- [ ] **MailApp authorization** — email sending silently fails until the teacher runs a function that calls `MailApp` in the editor and approves the permission dialog. One-time manual step per Apps Script project.
-- [ ] **Encoding of `checkDuplicate` response** — currently uses `JSON.stringify`. If names are ever included in the response, switch to `safeJson()`.
-- [ ] **`duplicateScreen` CSS inconsistency** — uses inline `style="display:none"` instead of the `.active` class pattern used by other screens. Low priority cosmetic issue.
+- [ ] **MailApp authorization** — email sending silently fails until the teacher manually runs any function calling `MailApp` in the Apps Script editor and approves the permission dialog. One-time step per project.
+- [ ] **Encoding of `checkDuplicate` response** — uses `JSON.stringify`. If names are ever included, switch to `safeJson()`.
+- [ ] **`duplicateScreen` CSS inconsistency** — uses inline `style="display:none"` instead of the `.active` class pattern. Low priority.
 
-### Future feature — New question types (not yet started, needs design decisions)
-Three new server-side-graded question types discussed and agreed on in principle:
-- **True/False** — treat as 2-option MC (CorrectIndex 1=True, 2=False), flows through existing MC pipeline.
-- **Fill in the Blank** — single-line text input; teacher defines comma-separated accepted answers; server grades by normalizing (trim + lowercase).
-- **Numeric with tolerance** — number input; teacher sets correct value and tolerance margin; server checks `|student − correct| ≤ tolerance`.
+### Future — New question types (not yet started)
+- **True/False** — 2-option MC (CorrectIndex 1=True, 2=False), flows through existing MC pipeline.
+- **Fill in the Blank** — single-line text; teacher defines comma-separated accepted answers; server grades by normalizing (trim + lowercase).
+- **Numeric with tolerance** — number input; teacher sets correct value and margin; server checks `|student − correct| ≤ tolerance`.
 
 **Open design questions:**
-1. Should FITB/numeric scores add to the existing "MC Score" column (no schema change) or should that column be renamed "Auto Score"?
-2. Should `oe_per_set` sampling treat TF/FITB/numeric as MC (non-OE slots), or can teachers guarantee minimums of specific types?
+1. Should FITB/numeric scores add to MC Score (no schema change) or rename that column "Auto Score"?
+2. Should `oe_per_set` sampling treat TF/FITB/numeric as MC slots, or can teachers guarantee minimums of specific types?
 
 ---
 
-## 4. Relevant Files & Tool Calls
+## 5. Relevant Files
 
 | File | Path | Role |
 |---|---|---|
-| `Code.gs` | `exam-grader/Code.gs` | Google Apps Script backend — all server logic, grading, sheet I/O |
+| `Code.gs` | `exam-grader/Code.gs` | Apps Script backend — all server logic, grading, sheet I/O |
 | `grader.html` | `exam-grader/grader.html` | Student-facing exam page |
 | `results.html` | `exam-grader/results.html` | Student results history page |
 | `admin.html` | `exam-grader/admin.html` | Teacher admin panel |
 | `index.html` | `exam-grader/index.html` | Landing page (GitHub Pages) |
-| `Exam Grading - Questions.csv` | `/home/andresforero/Documents/Marymount/10th planning/Project/` | Source of truth for question bank (Set C only). Import via admin Questions panel or paste into sheet. |
+| `Exam_Grading.csv` | `/home/andresforero/Documents/Marymount/10th planning/Project/` | Source of truth for question bank (Sets A, B, C, Yggdrasil). Paste into Questions sheet to load. |
 
-### Key changes by file (cumulative across all sessions)
+### Key changes by file (cumulative)
 
 **`Code.gs`**
 - `GEMINI_API_KEY` read from `PropertiesService`, never hardcoded
-- `callGeminiAPI`: explicit 403 branch with clear error message; `maxOutputTokens: 500`
-- `gradeWithGemini`: improved prompt — partial marks instruction, feedback must reference student's specific answer
-- `var cidx = Number(qr[10]) - 1` in `handleSubmission` (CorrectIndex off-by-one fix)
-- `handleRegradeAllMC()`: re-grades all MC from current question key, updates Detailed_Answers + Submissions
-- `'regrademc'` added to admin auth guard array and `doPost` dispatch
-- `handleCheckDuplicate(data)`: verifies JWT, checks email+set in Submissions, returns `{duplicate: true/false}`
+- `callGeminiAPI`: explicit 403 branch; `maxOutputTokens: 500`; feedback regex changed to `[\s\S]+` to capture multi-line responses
+- `gradeWithGemini`: partial marks instruction; feedback must reference student's specific answer
+- `var cidx = Number(qr[10]) - 1` in `handleSubmission` and `handleRegradeAllMC` (CorrectIndex 1-based→0-based conversion)
+- `handleRegradeAllMC()`: writes 5 columns (CORRECT_ANSWER, IS_CORRECT, AI_SCORE, MAX_SCORE, AI_FEEDBACK) — was incorrectly writing 4, corrupting MAX_SCORE
+- `'regrademc'` in admin auth guard and `doPost` dispatch
+- `handleCheckDuplicate(data)`: verifies JWT, checks `email + set + exam_id` in Submissions
 - `handleMcDistractors()`: tallies student answers per MC option, returns option counts with correct flag
-- `oe_per_set` sampling: when `oe_per_set > 0`, splits bank into typed pools and draws exact OE count first
-- `oe_per_set = 0` added to `createConfigSheet()` defaults
+- `handleResendEmails()`: implemented, not yet wired to admin UI button
+- `oe_per_set` sampling: splits bank into typed pools, draws exact OE count first
+- `oe_per_set = 0` in `createConfigSheet()` defaults
 
 **`grader.html`**
-- `startExam()` is async: POSTs `checkDuplicate` before showing questions or starting timer; shows duplicate screen immediately on match; re-enables button on network error
+- `startExam()` async: POSTs `checkDuplicate` before showing questions; handles duplicate + network-error states
 
 **`admin.html`**
-- Regrade All MC button (purple, ⚙ Settings panel) → `regradeAllMC()` → `action: 'regrademc'`
-- Reload button (toolbar) → `reloadSubmissions()` → `loadSubmissions()` without page refresh
-- `loadSubmissions()` now returns its promise (was missing `return`)
-- "Open-Ended per Set" input added to ⚙ Exam Settings; wired into `applyConfig()` and `saveConfig()`
-- 🎯 MC Distractor Analysis collapsible panel (set tabs, lazy load, horizontal bars, green=correct/red=wrong)
-- Grade Distribution chart: x-axis shows actual grade values sorted numerically, grouped bars by set
+- Regrade All MC button (purple, ⚙ Settings) → `action: 'regrademc'`
+- Reload button (toolbar) → `loadSubmissions()` without page refresh
+- `loadSubmissions()` returns its promise
+- "Open-Ended per Set" input in ⚙ Exam Settings
+- MC Distractor Analysis collapsible panel (set tabs, lazy load, horizontal bars)
+- Grade Distribution chart: sorted numeric x-axis, grouped bars by set
 
 ---
 
-## 5. Blockers & Notes
+## 6. Critical Rules
 
-### Critical rules to preserve
-- **Never send `correctIndex` to the client.** MC grading must remain 100% server-side.
-- **`CorrectIndex` in Questions sheet is 1-based (1=A … 4=D).** Always subtract 1 before indexing into the 0-based options array. This is easy to get wrong — it caused a major grading bug.
-- **Always use `safeJson()` for responses containing user-entered text** (names, answers, feedback). Plain status/error responses can use `JSON.stringify()`. Accentuated characters (é, á, ó) will garble otherwise.
-- **`appShell` must be visible before `renderTable()` in admin.html.** The chart reads `clientWidth` — if hidden, it draws at 0px width.
-- **`questions_per_set`, `oe_per_set`, and `randomize_questions` are all independent.** `oe_per_set` only activates when `questions_per_set > 0`.
-- **Every `Code.gs` change requires a new web app deployment.** URL does not change, but version must be bumped manually in the Apps Script editor.
-
-### Architecture constraints
-- All JS must be ES5-compatible (Google Apps Script runtime). No `const`/`let` in `Code.gs`, no arrow functions, no template literals.
-- No npm/Node. HTTP calls use `UrlFetchApp`, email uses `MailApp`, storage is Google Sheets via `SpreadsheetApp`.
-- All pages are static HTML connected to the backend via `?src=<APPS_SCRIPT_URL>` query param.
-- Admin password is checked on every admin POST — never cache beyond `sessionStorage`.
+- **Never send `correctIndex` to the client.** MC grading is 100% server-side.
+- **`CorrectIndex` in the Questions sheet is 1-based (1=A … 4=D).** Code subtracts 1 before indexing. Writing 0 → cidx=−1 → `undefined` → every answer marked wrong. This has burned us twice.
+- **`Exam_Grading.csv` CorrectIndex is also 1-based** — matches what the sheet expects. Do not revert to 0-based.
+- **Always use `safeJson()` for responses containing user-entered text** (names, answers, feedback). Plain status responses can use `JSON.stringify()`. Accented characters (é, á, ó) will garble otherwise.
+- **`appShell` must be visible before `renderTable()` in admin.html.** The chart reads `clientWidth` — if hidden, it draws at 0px.
+- **Every `Code.gs` change requires a new web app deployment.** URL does not change; bump the version in Apps Script editor.
+- **All JS in `Code.gs` must be ES5-compatible** (Google Apps Script runtime). No `const`/`let`, no arrow functions, no template literals.
+- **Admin password checked on every admin POST** — never cache beyond `sessionStorage`.
 
 ### Known data state
-- Set C questions: 19 MC + 5 OE (thermistor/trimmer questions removed). `CorrectIndex` filled in for all MC questions.
-- Sets A and B: no questions yet.
 - Google Client ID: `878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com`
-- Domain restriction: `hd: 'marymount.edu.co'` in both `grader.html` and `results.html`.
+- Domain restriction: `hd: 'marymount.edu.co'` in `grader.html` and `results.html`
+- Grade boundaries hardcoded as fallback in `GRADE_BOUNDARIES`; overridden at runtime by `grade_boundaries_A/B/C` in Config sheet

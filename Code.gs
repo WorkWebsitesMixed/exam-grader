@@ -898,10 +898,7 @@ function gradeWithGemini(studentAnswer, rubric, maxPoints) {
   var responseText = callGeminiAPI(prompt);
 
   var scoreMatch    = responseText.match(/SCORE:\s*(\d+)/i);
-  var feedbackMatch = responseText.match(/FEEDBACK:?\s+([^\n].+)/i);
-  if (!feedbackMatch) {
-    feedbackMatch = responseText.match(/FEEDBACK:?\s*\n+([\s\S]+)/i);
-  }
+  var feedbackMatch = responseText.match(/FEEDBACK:?\s+([\s\S]+)/i);
 
   var score    = scoreMatch ? Math.min(maxPoints, Math.max(0, parseInt(scoreMatch[1]))) : 0;
   var feedback = feedbackMatch ? feedbackMatch[1].trim() : '';
@@ -1600,8 +1597,8 @@ function handleRegradeAllMC() {
     var earned       = correct ? maxPts : 0;
     var feedback     = correct ? 'Correct' : ('Incorrect. Correct answer: ' + correctText);
 
-    detailSheet.getRange(di + 1, DCOL.CORRECT_ANSWER + 1, 1, 4).setValues([[
-      correctText, correct ? 'TRUE' : 'FALSE', earned, feedback
+    detailSheet.getRange(di + 1, DCOL.CORRECT_ANSWER + 1, 1, 5).setValues([[
+      correctText, correct ? 'TRUE' : 'FALSE', earned, maxPts, feedback
     ]]);
 
     var ts = String(dr[DCOL.TIMESTAMP]);
@@ -1791,6 +1788,15 @@ function createConfigSheet(ss) {
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
+  sheet.appendRow(['set_a_label',           'SET A — Standard']);
+  sheet.appendRow(['set_a_max_grade',       '2.3']);
+  sheet.appendRow(['set_a_description',     'Foundational questions.']);
+  sheet.appendRow(['set_b_label',           'SET B — Intermediate']);
+  sheet.appendRow(['set_b_max_grade',       '3.3']);
+  sheet.appendRow(['set_b_description',     'Application & calculation.']);
+  sheet.appendRow(['set_c_label',           'SET C — Advanced']);
+  sheet.appendRow(['set_c_max_grade',       '4.0']);
+  sheet.appendRow(['set_c_description',     'Complex system analysis.']);
   return sheet;
 }
 
