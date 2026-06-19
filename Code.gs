@@ -1,12 +1,13 @@
 // ============================================================
 // Code.gs  -  Exam Auto-Grader Backend
 // Paste this entire file into your Google Apps Script editor.
-// Store your Gemini API key in Apps Script Project Settings >
-// Script Properties with key name: GEMINI_API_KEY
+// Store your Anthropic (Claude) API key in Apps Script Project Settings >
+// Script Properties with key name: ANTHROPIC_API_KEY
 // Then deploy as a new Web App version (Anyone can access).
 // ============================================================
 
-var GEMINI_API_KEY    = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '';
+var ANTHROPIC_API_KEY = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || '';
+var GRADING_MODEL     = 'claude-sonnet-4-6';  // flip to 'claude-opus-4-8' for maximum feedback quality
 var GOOGLE_CLIENT_ID  = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 var SUBMISSIONS_SHEET = 'Submissions';
 var DETAILS_SHEET     = 'Detailed_Answers';
@@ -736,7 +737,7 @@ function handleSubmission(data) {
   for (var i = 0; i < openEnded.length; i++) {
     var q          = openEnded[i];
     var authPoints = (questionMap[q.questionId] ? questionMap[q.questionId].points : 0) || q.points;
-    var result     = gradeWithGemini(q.text, q.rubric, authPoints);
+    var result     = gradeOpenEnded(q.text, q.rubric, authPoints);
     openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback});
     openAIScores.push(result.score);
     totalOpenScore += result.score;
@@ -877,30 +878,34 @@ function writeDetailedAnswers(d) {
 }
 
 // ============================================================
-// GEMINI GRADING
+// OPEN-ENDED GRADING  (Claude / Anthropic Messages API)
 // ============================================================
-function gradeWithGemini(studentAnswer, rubric, maxPoints) {
+function gradeOpenEnded(studentAnswer, rubric, maxPoints) {
   if (!studentAnswer || studentAnswer.trim().length < 2) {
     return {score: 0, feedback: 'No answer provided.'};
   }
 
-  var prompt =
-    'You are a strict but fair grader for a high school Design & Technology exam.\n' +
-    'Evaluate the STUDENT\'S ANSWER against the RUBRIC and award marks.\n\n' +
-    'RUBRIC: ' + rubric + '\n' +
-    'STUDENT\'S ANSWER: ' + studentAnswer + '\n' +
-    'MAX POINTS: ' + maxPoints + '\n\n' +
-    'Award partial marks when the rubric says to.\n' +
-    'Reply with ONLY these two lines — no markdown, no extra text, no blank lines:\n' +
-    'SCORE: [integer from 0 to ' + maxPoints + ']\n' +
-    'FEEDBACK: [1-2 sentences: comment directly on what this student wrote — what they got right and/or wrong]';
+  var system =
+    'You are an experienced, fair examiner grading a high-school Design & Technology ' +
+    'exam answer against a marking rubric. Award partial marks wherever the rubric allows. ' +
+    'Judge only what the student actually wrote.';
 
-  var responseText = callGeminiAPI(prompt);
+  var userPrompt =
+    'RUBRIC:\n' + rubric + '\n\n' +
+    'STUDENT ANSWER:\n' + studentAnswer + '\n\n' +
+    'MAXIMUM MARKS: ' + maxPoints + '\n\n' +
+    'Grade the answer, then respond in EXACTLY this format and nothing else:\n' +
+    'SCORE: <integer from 0 to ' + maxPoints + '>\n' +
+    'FEEDBACK: <one detailed paragraph written directly to the student. Say what they got ' +
+    'right, what was missing or incorrect, and specifically what topics or concepts they ' +
+    'should review to improve. Be precise and encouraging, and refer to what they actually wrote.>';
+
+  var responseText = callClaudeAPI(system, userPrompt);
 
   var scoreMatch    = responseText.match(/SCORE:\s*(\d+)/i);
   var feedbackMatch = responseText.match(/FEEDBACK:?\s+([\s\S]+)/i);
 
-  var score    = scoreMatch ? Math.min(maxPoints, Math.max(0, parseInt(scoreMatch[1]))) : 0;
+  var score    = scoreMatch ? Math.min(maxPoints, Math.max(0, parseInt(scoreMatch[1], 10))) : 0;
   var feedback = feedbackMatch ? feedbackMatch[1].trim() : '';
 
   if (!feedback) {
@@ -911,28 +916,42 @@ function gradeWithGemini(studentAnswer, rubric, maxPoints) {
   return {score: score, feedback: feedback};
 }
 
-function callGeminiAPI(prompt) {
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
+function callClaudeAPI(systemPrompt, userPrompt) {
+  var url = 'https://api.anthropic.com/v1/messages';
   var payload = JSON.stringify({
-    contents: [{parts: [{text: prompt}]}],
-    generationConfig: {temperature: 0.1, maxOutputTokens: 1024},
-    thinkingConfig: {thinkingBudget: 0}
+    model: GRADING_MODEL,
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{role: 'user', content: userPrompt}]
   });
-  var options = {method: 'post', contentType: 'application/json', payload: payload, muteHttpExceptions: true};
-  var delays  = [2000, 4000, 8000];
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    payload: payload,
+    muteHttpExceptions: true
+  };
+  var delays = [2000, 4000, 8000];
 
   for (var attempt = 0; attempt <= delays.length; attempt++) {
     var response = UrlFetchApp.fetch(url, options);
     var code     = response.getResponseCode();
 
     if (code === 200) {
-      var json = JSON.parse(response.getContentText());
-      return json.candidates[0].content.parts[0].text;
+      var json   = JSON.parse(response.getContentText());
+      var blocks = json.content || [];
+      for (var b = 0; b < blocks.length; b++) {
+        if (blocks[b].type === 'text' && blocks[b].text) { return blocks[b].text; }
+      }
+      return 'SCORE: 0\nFEEDBACK: Grading produced no text (the request may have been declined).';
     }
 
-    if ((code === 429 || code === 503) && attempt < delays.length) {
+    if ((code === 429 || code >= 500) && attempt < delays.length) {
       Utilities.sleep(delays[attempt]);
-    } else if (code === 403) {
+    } else if (code === 401 || code === 403) {
       return 'SCORE: 0\nFEEDBACK: Grading unavailable (API key not configured or invalid).';
     } else {
       break;
