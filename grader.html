@@ -969,7 +969,7 @@
                 });
                 Object.keys(saved.openEnded || {}).forEach(function(qid) {
                     var text     = saved.openEnded[qid];
-                    var textarea = document.querySelector('textarea[data-qid="' + qid + '"]');
+                    var textarea = document.querySelector('[data-qid="' + qid + '"]');
                     if (textarea) { textarea.value = text; answers.openEnded[qid] = text; }
                 });
             } catch(e) {}
@@ -997,6 +997,10 @@
                         '<span>' + letter + '</span>. ' + escapeHtml(q.options[origIdx]) + '</label>';
                 });
                 html += '</div>';
+            } else if (q.type === 'short') {
+                html += '<input type="text" class="short-answer" data-qid="' + q.id + '" placeholder="Your answer..." ' +
+                    'style="width:100%; padding:10px; border:2px solid var(--border-color); border-radius:6px; font-size:15px;" ' +
+                    'oninput="answers.' + targetDict + '[\'' + q.id + '\']=this.value;saveAnswers()">';
             } else {
                 html += '<textarea data-qid="' + q.id + '" placeholder="Type answer/calculations..." ' +
                     'oninput="answers.' + targetDict + '[\'' + q.id + '\']=this.value;saveAnswers()"></textarea>';
@@ -1147,8 +1151,8 @@
             });
 
             var openArr = questions[selectedSet]
-                .filter(function (q) { return q.type === 'openEnded'; })
-                .map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.openEnded[q.id] || '', points: q.points, rubric: q.rubric }; });
+                .filter(function (q) { return q.type === 'openEnded' || q.type === 'short'; })
+                .map(function (q) { return { questionId: q.id, questionText: q.text, text: answers.openEnded[q.id] || '', points: q.points }; });
 
             fetch(appsScriptUrl, {
                 method: 'POST',

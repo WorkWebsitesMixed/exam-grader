@@ -735,6 +735,7 @@
                 <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Type</label>
                 <select id="qType" onchange="toggleQType()" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
                     <option value="mc">Multiple Choice</option>
+                    <option value="short">Short Answer (exact match)</option>
                     <option value="openEnded">Open-Ended</option>
                 </select>
             </div>
@@ -764,6 +765,11 @@
         <div id="qOeSection" style="display:none;">
             <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Grading Rubric</label>
             <textarea id="qRubric" rows="3" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; resize:vertical;" placeholder="Describe what a full-marks answer should include..."></textarea>
+        </div>
+        <div id="qShortSection" style="display:none;">
+            <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Accepted Answers (comma-separated)</label>
+            <input type="text" id="qShortAccepted" placeholder="e.g. carbon fibre, CFRP, glass fibre" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+            <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Graded automatically by exact match (case- and space-insensitive), no AI. Full marks if the student's answer matches any accepted answer.</p>
         </div>
         <p id="qModalError" style="color:var(--error); font-size:13px; margin-top:10px; display:none;"></p>
         <div class="modal-footer">
@@ -1218,10 +1224,11 @@
     }
 
     function toggleQType() {
-        var isMc = document.getElementById('qType').value === 'mc';
-        document.getElementById('qMcSection').style.display = isMc ? '' : 'none';
-        document.getElementById('qOeSection').style.display = isMc ? 'none' : '';
-        if (isMc) { buildMcOptions(['','','',''], 0); }
+        var t = document.getElementById('qType').value;
+        document.getElementById('qMcSection').style.display    = (t === 'mc') ? '' : 'none';
+        document.getElementById('qOeSection').style.display    = (t === 'openEnded') ? '' : 'none';
+        document.getElementById('qShortSection').style.display = (t === 'short') ? '' : 'none';
+        if (t === 'mc') { buildMcOptions(['','','',''], 0); }
     }
 
     function openAddQuestion() {
@@ -1233,6 +1240,7 @@
         document.getElementById('qPoints').value = '1';
         document.getElementById('qText').value   = '';
         document.getElementById('qRubric').value = '';
+        document.getElementById('qShortAccepted').value = '';
         document.getElementById('qImageId').value = '';
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
@@ -1252,17 +1260,18 @@
         document.getElementById('qType').value   = q.type;
         document.getElementById('qPoints').value = q.points;
         document.getElementById('qText').value   = q.text;
-        document.getElementById('qRubric').value = q.rubric || '';
+        document.getElementById('qRubric').value = (q.type === 'openEnded') ? (q.rubric || '') : '';
+        document.getElementById('qShortAccepted').value = (q.type === 'short') ? (q.rubric || '') : '';
         document.getElementById('qImageId').value = q.image || '';
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
         showQImagePreview(q.imageUrl || '');
         document.getElementById('qModalError').style.display = 'none';
 
-        var isMc = q.type === 'mc';
-        document.getElementById('qMcSection').style.display = isMc ? '' : 'none';
-        document.getElementById('qOeSection').style.display = isMc ? 'none' : '';
-        if (isMc) { buildMcOptions([q.optA, q.optB, q.optC, q.optD], q.correctIndex || 0); }
+        document.getElementById('qMcSection').style.display    = (q.type === 'mc') ? '' : 'none';
+        document.getElementById('qOeSection').style.display    = (q.type === 'openEnded') ? '' : 'none';
+        document.getElementById('qShortSection').style.display = (q.type === 'short') ? '' : 'none';
+        if (q.type === 'mc') { buildMcOptions([q.optA, q.optB, q.optC, q.optD], q.correctIndex || 0); }
         document.getElementById('questionModal').classList.add('active');
     }
 
@@ -1347,6 +1356,9 @@
             if (!q.optA || !q.optB || !q.optC || !q.optD) { errEl.textContent = 'All four options are required.'; errEl.style.display = 'block'; return; }
             var correctRadio = document.querySelector('input[name="qCorrect"]:checked');
             q.correctIndex = correctRadio ? parseInt(correctRadio.value, 10) : 0;
+        } else if (qType === 'short') {
+            q.rubric = document.getElementById('qShortAccepted').value.trim();
+            if (!q.rubric) { errEl.textContent = 'At least one accepted answer is required.'; errEl.style.display = 'block'; return; }
         } else {
             q.rubric = document.getElementById('qRubric').value.trim();
             if (!q.rubric) { errEl.textContent = 'Rubric is required for open-ended questions.'; errEl.style.display = 'block'; return; }

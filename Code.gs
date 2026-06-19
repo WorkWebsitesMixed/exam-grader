@@ -253,7 +253,8 @@ function getQuestionsResponse() {
     // Empty Exam field = belongs to all exams; non-empty must match active exam_id
     if (qExam && activeExamId && qExam !== activeExamId) { continue; }
 
-    var q = {id: id, section: section, type: type, points: points, text: text, rubric: rubric, imageUrl: driveImageUrl_(imageId)};
+    // NOTE: rubric / accepted-answers are intentionally NOT sent to students.
+    var q = {id: id, section: section, type: type, points: points, text: text, imageUrl: driveImageUrl_(imageId)};
 
     if (type === 'mc') {
       var opts = [optA, optB, optC, optD];
@@ -690,7 +691,7 @@ function handleSubmission(data) {
         var cidx = Number(qr[10]) - 1;  // CSV is 1-based (1=A…4=D), opts[] is 0-based
         questionMap[qid] = {type: 'mc', correctText: opts[cidx], points: Number(qr[4])};
       } else {
-        questionMap[qid] = {type: qtype, points: Number(qr[4])};
+        questionMap[qid] = {type: qtype, points: Number(qr[4]), rubric: String(qr[11]).trim()};
       }
     }
   }
@@ -738,8 +739,12 @@ function handleSubmission(data) {
 
   for (var i = 0; i < openEnded.length; i++) {
     var q          = openEnded[i];
-    var authPoints = (questionMap[q.questionId] ? questionMap[q.questionId].points : 0) || q.points;
-    var result     = gradeOpenEnded(q.text, q.rubric, authPoints);
+    var qInfoOe    = questionMap[q.questionId];
+    var authPoints = (qInfoOe ? qInfoOe.points : 0) || q.points;
+    var rubricText = qInfoOe ? qInfoOe.rubric : (q.rubric || '');
+    var result     = (qInfoOe && qInfoOe.type === 'short')
+                     ? gradeShortAnswer(q.text, rubricText, authPoints)
+                     : gradeOpenEnded(q.text, rubricText, authPoints);
     openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback});
     openAIScores.push(result.score);
     totalOpenScore += result.score;
@@ -916,6 +921,25 @@ function gradeOpenEnded(studentAnswer, rubric, maxPoints) {
   if (!feedback) { feedback = 'Grading complete.'; }
 
   return {score: score, feedback: feedback};
+}
+
+// Short-answer grading — exact normalized match against accepted answers
+// (comma-separated, stored in the Rubric column). No AI call.
+function gradeShortAnswer(studentAnswer, acceptedCsv, maxPoints) {
+  var ans = normalizeShort_(studentAnswer);
+  if (!ans) { return {score: 0, feedback: 'No answer provided.'}; }
+  var list = String(acceptedCsv || '').split(',');
+  for (var i = 0; i < list.length; i++) {
+    var acc = normalizeShort_(list[i]);
+    if (acc && acc === ans) {
+      return {score: maxPoints, feedback: 'Correct.'};
+    }
+  }
+  return {score: 0, feedback: 'Incorrect. Accepted answer(s): ' + String(acceptedCsv || '').trim() + '.'};
+}
+
+function normalizeShort_(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function callClaudeAPI(systemPrompt, userPrompt) {
