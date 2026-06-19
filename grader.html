@@ -982,6 +982,11 @@
             var html = '<div class="question-number">' + label + num + '</div>' +
                 '<div class="question-text">' + escapeHtml(q.text) + '</div>';
 
+            if (q.imageUrl) {
+                html += '<div class="question-image"><img src="' + q.imageUrl + '" alt="Figure" loading="lazy" ' +
+                    'style="max-width:100%; height:auto; border:1px solid var(--border-color); border-radius:8px; margin:4px 0 14px;"></div>';
+            }
+
             if (q.type === 'mc') {
                 html += '<div class="mc-options">';
                 q.shuffled.forEach(function (origIdx, dispIdx) {

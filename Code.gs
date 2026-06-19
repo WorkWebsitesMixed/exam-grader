@@ -247,12 +247,13 @@ function getQuestionsResponse() {
     var optD    = String(row[9]).trim();
     var rubric  = String(row[11]).trim();
     var qExam   = String(row[12] !== undefined ? row[12] : '').trim();
+    var imageId = String(row[13] !== undefined ? row[13] : '').trim();
 
     if (!set || !id || !text) { continue; }
     // Empty Exam field = belongs to all exams; non-empty must match active exam_id
     if (qExam && activeExamId && qExam !== activeExamId) { continue; }
 
-    var q = {id: id, section: section, type: type, points: points, text: text, rubric: rubric};
+    var q = {id: id, section: section, type: type, points: points, text: text, rubric: rubric, imageUrl: driveImageUrl_(imageId)};
 
     if (type === 'mc') {
       var opts = [optA, optB, optC, optD];
@@ -559,7 +560,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -581,6 +582,7 @@ function doPost(e) {
     if (data.action === 'regrademc')        { return handleRegradeAllMC(); }
     if (data.action === 'resendEmails')     { return handleResendEmails(data); }
     if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
+    if (data.action === 'uploadImage')      { return handleUploadImage(data); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -1291,7 +1293,9 @@ function getAdminQuestionsResponse() {
       optD:         String(row[9]).trim(),
       correctIndex: (row[10] !== '' && row[10] !== null && row[10] !== undefined) ? Number(row[10]) : 0,
       rubric:       String(row[11]).trim(),
-      exam:         String(row[12] !== undefined ? row[12] : '').trim()
+      exam:         String(row[12] !== undefined ? row[12] : '').trim(),
+      image:        String(row[13] !== undefined ? row[13] : '').trim(),
+      imageUrl:     driveImageUrl_(String(row[13] !== undefined ? row[13] : '').trim())
     });
   }
   return ContentService
@@ -1318,7 +1322,8 @@ function handleAddQuestion(data) {
     String(q.optD || ''),
     q.type === 'mc' ? (Number(q.correctIndex) || 0) : '',
     String(q.rubric || ''),
-    String(q.exam || '')
+    String(q.exam || ''),
+    String(q.image || '')
   ]);
   return ContentService
     .createTextOutput(JSON.stringify({success: true, id: id}))
@@ -1334,7 +1339,7 @@ function handleUpdateQuestion(data) {
   var rows     = qSheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][1]).trim() === targetId) {
-      qSheet.getRange(i + 1, 1, 1, 13).setValues([[
+      qSheet.getRange(i + 1, 1, 1, 14).setValues([[
         String(q.set || rows[i][0]).toUpperCase(),
         targetId,
         String(q.section !== undefined ? q.section : rows[i][2]),
@@ -1347,7 +1352,8 @@ function handleUpdateQuestion(data) {
         String(q.optD !== undefined ? q.optD : rows[i][9]),
         (q.type || rows[i][3]) === 'mc' ? Number(q.correctIndex !== undefined ? q.correctIndex : rows[i][10]) : '',
         String(q.rubric !== undefined ? q.rubric : rows[i][11]),
-        String(q.exam !== undefined ? q.exam : (rows[i][12] !== undefined ? rows[i][12] : ''))
+        String(q.exam !== undefined ? q.exam : (rows[i][12] !== undefined ? rows[i][12] : '')),
+        String(q.image !== undefined ? q.image : (rows[i][13] !== undefined ? rows[i][13] : ''))
       ]]);
       return ContentService
         .createTextOutput(JSON.stringify({success: true}))
@@ -1839,9 +1845,56 @@ function createConfigSheet(ss) {
   return sheet;
 }
 
+// ============================================================
+// IMAGE UPLOAD  (stored in the teacher's own Google Drive)
+// ============================================================
+function handleUploadImage(data) {
+  try {
+    var b64  = String(data.dataBase64 || '');
+    var mime = String(data.mimeType || 'image/png');
+    var name = String(data.filename || ('question_image_' + Date.now()));
+    if (!b64) {
+      return ContentService.createTextOutput(JSON.stringify({success: false, error: 'No image data received.'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var bytes = Utilities.base64Decode(b64);
+    var blob  = Utilities.newBlob(bytes, mime, name);
+    var file  = getImageFolder_().createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var id = file.getId();
+    return ContentService
+      .createTextOutput(JSON.stringify({success: true, fileId: id, imageUrl: driveImageUrl_(id)}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// Get (or create) the per-teacher Drive folder that holds question images.
+function getImageFolder_() {
+  var name = 'Exam Grader Images';
+  var it   = DriveApp.getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+// Build an <img>-embeddable URL from a Drive file id. Empty id -> ''.
+function driveImageUrl_(id) {
+  if (!id) { return ''; }
+  return 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600';
+}
+
+// PHASE 3 SETUP — run once from the editor to grant Drive access and create
+// the image folder. Approve the Drive permission when prompted. Safe to delete later.
+function testImageSetup() {
+  var folder = getImageFolder_();
+  Logger.log('Image folder ready: ' + folder.getName() + ' (id ' + folder.getId() + ')');
+  return folder.getId();
+}
+
 function createQuestionsSheet(ss) {
   if (!ss) { ss = SpreadsheetApp.getActiveSpreadsheet(); }
   var sheet = ss.insertSheet(QUESTIONS_SHEET);
-  sheet.appendRow(['Set','ID','Section','Type','Points','Text','Option_A','Option_B','Option_C','Option_D','CorrectIndex','Rubric','Exam']);
+  sheet.appendRow(['Set','ID','Section','Type','Points','Text','Option_A','Option_B','Option_C','Option_D','CorrectIndex','Rubric','Exam','Image']);
   return sheet;
 }

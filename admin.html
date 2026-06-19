@@ -747,6 +747,16 @@
             <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Question Text</label>
             <textarea id="qText" rows="3" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; resize:vertical;"></textarea>
         </div>
+        <div style="margin-bottom:14px;">
+            <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Figure / Image (optional)</label>
+            <input type="hidden" id="qImageId" value="">
+            <input type="file" id="qImageFile" accept="image/*" onchange="uploadQuestionImage()" style="font-size:13px;">
+            <span id="qImageStatus" style="font-size:12px; color:var(--muted); margin-left:8px;"></span>
+            <div id="qImagePreviewWrap" style="display:none; margin-top:10px;">
+                <img id="qImagePreview" alt="Figure preview" style="max-width:100%; max-height:220px; border:1px solid var(--border); border-radius:6px; display:block;">
+                <button type="button" class="btn btn-close" onclick="removeQuestionImage()" style="margin-top:8px; padding:4px 12px; font-size:12px;">Remove image</button>
+            </div>
+        </div>
         <div id="qMcSection">
             <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:8px;">Options (select correct answer)</label>
             <div id="qOptions"></div>
@@ -1207,6 +1217,10 @@
         document.getElementById('qPoints').value = '1';
         document.getElementById('qText').value   = '';
         document.getElementById('qRubric').value = '';
+        document.getElementById('qImageId').value = '';
+        document.getElementById('qImageFile').value = '';
+        document.getElementById('qImageStatus').textContent = '';
+        showQImagePreview('');
         document.getElementById('qModalError').style.display = 'none';
         toggleQType();
         document.getElementById('questionModal').classList.add('active');
@@ -1223,6 +1237,10 @@
         document.getElementById('qPoints').value = q.points;
         document.getElementById('qText').value   = q.text;
         document.getElementById('qRubric').value = q.rubric || '';
+        document.getElementById('qImageId').value = q.image || '';
+        document.getElementById('qImageFile').value = '';
+        document.getElementById('qImageStatus').textContent = '';
+        showQImagePreview(q.imageUrl || '');
         document.getElementById('qModalError').style.display = 'none';
 
         var isMc = q.type === 'mc';
@@ -1234,6 +1252,52 @@
 
     function closeQuestionModal() {
         document.getElementById('questionModal').classList.remove('active');
+    }
+
+    function uploadQuestionImage() {
+        var input = document.getElementById('qImageFile');
+        var file  = input.files && input.files[0];
+        if (!file) { return; }
+        var status = document.getElementById('qImageStatus');
+        status.textContent = 'Uploading...';
+        var reader = new FileReader();
+        reader.onload = function() {
+            var dataUrl = String(reader.result);
+            var base64  = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
+            fetch(appsScriptUrl, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'uploadImage',
+                    filename: file.name,
+                    mimeType: file.type || 'image/png',
+                    dataBase64: base64,
+                    adminPassword: getStoredAdminPassword()
+                })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success) { throw new Error(data.error || 'Upload failed'); }
+                document.getElementById('qImageId').value = data.fileId;
+                showQImagePreview(data.imageUrl);
+                status.textContent = 'Uploaded ✓';
+            })
+            .catch(function(err) { status.textContent = 'Upload failed: ' + err.message; });
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function showQImagePreview(url) {
+        var wrap = document.getElementById('qImagePreviewWrap');
+        var img  = document.getElementById('qImagePreview');
+        if (url) { img.src = url; wrap.style.display = 'block'; }
+        else { img.removeAttribute('src'); wrap.style.display = 'none'; }
+    }
+
+    function removeQuestionImage() {
+        document.getElementById('qImageId').value = '';
+        document.getElementById('qImageFile').value = '';
+        document.getElementById('qImageStatus').textContent = '';
+        showQImagePreview('');
     }
 
     function saveQuestion() {
@@ -1255,7 +1319,8 @@
             section: '',
             optA: '', optB: '', optC: '', optD: '',
             correctIndex: 0,
-            rubric: ''
+            rubric: '',
+            image: document.getElementById('qImageId').value
         };
 
         if (qType === 'mc') {
