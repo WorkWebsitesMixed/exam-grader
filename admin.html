@@ -1322,8 +1322,8 @@
 
     function loadImageGallery(force) {
         var sel = document.getElementById('qImageReuse');
-        function fill() {
-            sel.innerHTML = '<option value="">— or reuse an uploaded image —</option>';
+        function fill(note) {
+            sel.innerHTML = '<option value="">' + (note || '— or reuse an uploaded image —') + '</option>';
             (imageGallery || []).forEach(function(img) {
                 var o = document.createElement('option');
                 o.value = img.id; o.textContent = img.name;
@@ -1333,8 +1333,12 @@
         if (imageGallery && !force) { fill(); return; }
         fetch(appsScriptUrl, { method: 'POST', body: JSON.stringify({ action: 'listImages', adminPassword: getStoredAdminPassword() }) })
         .then(function(r) { return r.json(); })
-        .then(function(data) { imageGallery = data.images || []; fill(); })
-        .catch(function() {});
+        .then(function(data) {
+            console.log('listImages response:', data);
+            imageGallery = data.images || [];
+            fill(imageGallery.length ? null : ('— none found' + (data.error ? ': ' + data.error : '') + ' —'));
+        })
+        .catch(function(err) { console.log('listImages error:', err); fill('— failed to load —'); });
     }
 
     function reuseExistingImage() {
