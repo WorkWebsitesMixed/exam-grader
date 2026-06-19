@@ -561,7 +561,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk', 'listImages'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -586,6 +586,7 @@ function doPost(e) {
     if (data.action === 'uploadImage')      { return handleUploadImage(data); }
     if (data.action === 'extractQuestions') { return handleExtractQuestions(data); }
     if (data.action === 'addQuestionsBulk') { return handleAddQuestionsBulk(data); }
+    if (data.action === 'listImages')       { return handleListImages(); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -1910,6 +1911,20 @@ function driveImageUrl_(id) {
   return 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600';
 }
 
+// List the images already uploaded to the teacher's Drive folder, so a figure
+// can be reused across questions without re-uploading.
+function handleListImages() {
+  var folder = getImageFolder_();
+  var it     = folder.getFiles();
+  var out    = [];
+  while (it.hasNext()) {
+    var f = it.next();
+    out.push({id: f.getId(), name: f.getName(), url: driveImageUrl_(f.getId())});
+  }
+  out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+  return jsonOut_({success: true, images: out});
+}
+
 // PHASE 3 SETUP — run once from the editor to grant Drive access and create
 // the image folder. Approve the Drive permission when prompted. Safe to delete later.
 function testImageSetup() {
@@ -1943,8 +1958,9 @@ function handleExtractQuestions(data) {
       'Do NOT include answers or mark schemes.';
 
     var text = callClaudeWithPdf_(system, userText, b64, 8000);
+    Logger.log('extractQuestions: pdfBase64Len=' + b64.length + ' responseLen=' + (text ? text.length : 0));
     var arr  = extractJsonArray_(text);
-    if (!arr) { return jsonOut_({success: false, error: 'Could not parse questions from the AI response.'}); }
+    if (!arr) { return jsonOut_({success: false, error: 'Could not parse questions from the AI response.', rawSample: String(text || '').slice(0, 1500)}); }
 
     var out = [];
     for (var i = 0; i < arr.length; i++) {
@@ -1954,7 +1970,7 @@ function handleExtractQuestions(data) {
       var opts = (q.options instanceof Array) ? q.options.map(function(o) { return String(o); }) : [];
       out.push({ text: String(q.text || '').trim(), type: t, points: Number(q.points) || 1, options: opts });
     }
-    return jsonOut_({success: true, questions: out});
+    return jsonOut_({success: true, questions: out, rawSample: out.length === 0 ? String(text || '').slice(0, 1500) : '', pdfBytes: b64.length});
   } catch (err) {
     return jsonOut_({success: false, error: err.message});
   }

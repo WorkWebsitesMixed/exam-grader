@@ -943,8 +943,11 @@
         function renderQuestions() {
             var container = document.getElementById('questionsContainer');
             container.innerHTML = '';
+            var prevImg = null;
             questions[selectedSet].forEach(function (q, i) {
-                container.appendChild(createQuestionCard(q, i + 1, 'openEnded'));
+                var hideImage = !!(q.imageUrl && q.imageUrl === prevImg);
+                container.appendChild(createQuestionCard(q, i + 1, 'openEnded', hideImage));
+                prevImg = q.imageUrl || null;
             });
         }
 
@@ -975,14 +978,14 @@
             } catch(e) {}
         }
 
-        function createQuestionCard(q, num, targetDict) {
+        function createQuestionCard(q, num, targetDict, hideImage) {
             var card = document.createElement('div');
             card.className = 'question-card';
             var label = 'Question ';
             var html = '<div class="question-number">' + label + num + '</div>' +
                 '<div class="question-text">' + escapeHtml(q.text) + '</div>';
 
-            if (q.imageUrl) {
+            if (q.imageUrl && !hideImage) {
                 html += '<div class="question-image"><img src="' + q.imageUrl + '" alt="Figure" loading="lazy" ' +
                     'style="max-width:100%; height:auto; border:1px solid var(--border-color); border-radius:8px; margin:4px 0 14px;"></div>';
             }

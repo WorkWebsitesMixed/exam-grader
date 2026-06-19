@@ -754,6 +754,9 @@
             <input type="hidden" id="qImageId" value="">
             <input type="file" id="qImageFile" accept="image/*" onchange="uploadQuestionImage()" style="font-size:13px;">
             <span id="qImageStatus" style="font-size:12px; color:var(--muted); margin-left:8px;"></span>
+            <select id="qImageReuse" onchange="reuseExistingImage()" style="display:block; margin-top:8px; max-width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
+                <option value="">— or reuse an uploaded image —</option>
+            </select>
             <div id="qImagePreviewWrap" style="display:none; margin-top:10px;">
                 <img id="qImagePreview" alt="Figure preview" style="max-width:100%; max-height:220px; border:1px solid var(--border); border-radius:6px; display:block;">
                 <button type="button" class="btn btn-close" onclick="removeQuestionImage()" style="margin-top:8px; padding:4px 12px; font-size:12px;">Remove image</button>
@@ -1277,6 +1280,8 @@
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
         showQImagePreview('');
+        document.getElementById('qImageReuse').value = '';
+        loadImageGallery();
         document.getElementById('qModalError').style.display = 'none';
         toggleQType();
         document.getElementById('questionModal').classList.add('active');
@@ -1298,6 +1303,8 @@
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
         showQImagePreview(q.imageUrl || '');
+        document.getElementById('qImageReuse').value = '';
+        loadImageGallery();
         document.getElementById('qModalError').style.display = 'none';
 
         document.getElementById('qMcSection').style.display    = (q.type === 'mc') ? '' : 'none';
@@ -1309,6 +1316,34 @@
 
     function closeQuestionModal() {
         document.getElementById('questionModal').classList.remove('active');
+    }
+
+    var imageGallery = null;
+
+    function loadImageGallery(force) {
+        var sel = document.getElementById('qImageReuse');
+        function fill() {
+            sel.innerHTML = '<option value="">— or reuse an uploaded image —</option>';
+            (imageGallery || []).forEach(function(img) {
+                var o = document.createElement('option');
+                o.value = img.id; o.textContent = img.name;
+                sel.appendChild(o);
+            });
+        }
+        if (imageGallery && !force) { fill(); return; }
+        fetch(appsScriptUrl, { method: 'POST', body: JSON.stringify({ action: 'listImages', adminPassword: getStoredAdminPassword() }) })
+        .then(function(r) { return r.json(); })
+        .then(function(data) { imageGallery = data.images || []; fill(); })
+        .catch(function() {});
+    }
+
+    function reuseExistingImage() {
+        var id = document.getElementById('qImageReuse').value;
+        if (!id) { return; }
+        var img = (imageGallery || []).filter(function(x) { return x.id === id; })[0];
+        document.getElementById('qImageId').value = id;
+        document.getElementById('qImageStatus').textContent = 'Reusing image';
+        showQImagePreview(img ? img.url : '');
     }
 
     function uploadQuestionImage() {
@@ -1337,6 +1372,8 @@
                 document.getElementById('qImageId').value = data.fileId;
                 showQImagePreview(data.imageUrl);
                 status.textContent = 'Uploaded ✓';
+                imageGallery = null;
+                document.getElementById('qImageReuse').value = '';
             })
             .catch(function(err) { status.textContent = 'Upload failed: ' + err.message; });
         };
@@ -1354,6 +1391,7 @@
         document.getElementById('qImageId').value = '';
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
+        document.getElementById('qImageReuse').value = '';
         showQImagePreview('');
     }
 
@@ -1396,9 +1434,13 @@
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (!data.success) { throw new Error(data.error || 'Extraction failed'); }
+                if (!data.success) { throw new Error((data.error || 'Extraction failed') + (data.rawSample ? '\n\nAI said:\n' + data.rawSample : '')); }
                 importedQuestions = data.questions || [];
+                console.log('extractQuestions response:', data);
                 renderImportPreview();
+                if (!importedQuestions.length && data.rawSample) {
+                    document.getElementById('impPreview').innerHTML = '<pre style="white-space:pre-wrap; font-size:11px; color:var(--muted); border:1px dashed var(--border); padding:8px; border-radius:6px;">DEBUG — raw AI output (PDF bytes sent: ' + (data.pdfBytes || '?') + '):\n' + escapeHtml(data.rawSample) + '</pre>';
+                }
                 status.textContent = 'Found ' + importedQuestions.length + ' question(s). Review below.';
             })
             .catch(function(err) { errEl.textContent = err.message; errEl.style.display = 'block'; status.textContent = ''; });
