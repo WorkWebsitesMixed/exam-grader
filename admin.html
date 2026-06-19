@@ -523,6 +523,17 @@
                         <input type="password" id="cfgPassword" placeholder="New password (blank = keep current)" autocomplete="new-password">
                     </div>
                     <div class="config-field" style="grid-column: 1 / -1;">
+                        <label>IGCSE Exam (standardized)</label>
+                        <div class="toggle-wrap">
+                            <label class="toggle">
+                                <input type="checkbox" id="cfgIgcse" onchange="updateIgcseLabel(); applyIgcseUI();">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="igcseLabel" class="toggle-label off">Off</span>
+                        </div>
+                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">On = every student gets the identical paper: question randomization and sampling are disabled, multiple-choice options keep their fixed printed order, and a marking-scheme uploader appears in the Questions panel.</p>
+                    </div>
+                    <div class="config-field" style="grid-column: 1 / -1;">
                         <label>Question Sets</label>
                         <div class="toggle-wrap">
                             <label class="toggle">
@@ -638,6 +649,13 @@
                 <span id="questionsChevron" style="color:var(--muted);">▼</span>
             </div>
             <div class="config-body" id="questionsBody">
+                <div id="schemeSection" style="display:none; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:16px; background:var(--bg);">
+                    <label style="font-size:12px; font-weight:700; color:var(--primary); display:block; margin-bottom:6px;">Marking Scheme → Rubrics</label>
+                    <p style="font-size:11px; color:var(--muted); margin:0 0 8px; line-height:1.4;">Upload the official marking-scheme PDF. The AI writes a rubric for each open-ended question (review/edit them afterward via Edit). Multiple-choice and short-answer questions are not affected.</p>
+                    <input type="file" id="schemeFile" accept="application/pdf" style="font-size:13px;">
+                    <button class="btn btn-save" onclick="generateRubricsFromScheme()" style="margin-left:8px;">Generate rubrics</button>
+                    <span id="schemeStatus" style="font-size:12px; color:var(--muted); margin-left:8px;"></span>
+                </div>
                 <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
                     <button id="qtab-A" class="boundary-tab active" onclick="showQSet('A')">Set A</button>
                     <button id="qtab-B" class="boundary-tab" onclick="showQSet('B')">Set B</button>
@@ -957,6 +975,9 @@
         document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
         document.getElementById('cfgSetMode').checked   = (config.set_mode !== 'single');
         updateSetModeLabel();
+        document.getElementById('cfgIgcse').checked = (config.exam_type === 'igcse');
+        updateIgcseLabel();
+        applyIgcseUI();
         document.getElementById('cfgQPerSet').value    = config.questions_per_set || '0';
         document.getElementById('cfgOePerSet').value   = config.oe_per_set || '0';
 
@@ -1185,6 +1206,51 @@
 
     // In single-set mode, hide all set tabs (Questions + Grade Boundaries) and
     // the Set dropdown in the question form; everything defaults to Set A.
+    function updateIgcseLabel() {
+        var on  = document.getElementById('cfgIgcse').checked;
+        var lbl = document.getElementById('igcseLabel');
+        lbl.textContent = on ? 'On' : 'Off';
+        lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
+    }
+
+    // IGCSE standardization: disable randomization + sampling controls, and reveal
+    // the marking-scheme uploader in the Questions panel.
+    function applyIgcseUI() {
+        var igcse = document.getElementById('cfgIgcse').checked;
+        ['cfgRandomize', 'cfgQPerSet', 'cfgOePerSet'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (!el) { return; }
+            el.disabled = igcse;
+            var field = el.closest('.config-field');
+            if (field) { field.style.opacity = igcse ? '0.5' : ''; }
+        });
+        var s = document.getElementById('schemeSection');
+        if (s) { s.style.display = igcse ? 'block' : 'none'; }
+    }
+
+    function generateRubricsFromScheme() {
+        var input  = document.getElementById('schemeFile');
+        var file   = input.files && input.files[0];
+        var status = document.getElementById('schemeStatus');
+        if (!file) { status.textContent = 'Choose the marking-scheme PDF first.'; return; }
+        status.textContent = 'Reading PDF...';
+        var reader = new FileReader();
+        reader.onload = function() {
+            var dataUrl = String(reader.result);
+            var base64  = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
+            status.textContent = 'Generating rubrics with AI (20-40s)...';
+            fetch(appsScriptUrl, { method: 'POST', body: JSON.stringify({ action: 'generateRubrics', dataBase64: base64, adminPassword: getStoredAdminPassword() }) })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success) { throw new Error(data.error || 'Failed'); }
+                status.textContent = 'Updated ' + data.updated + ' of ' + data.total + ' open-ended rubric(s). Review via Edit on each question.';
+                loadQuestions();
+            })
+            .catch(function(err) { status.textContent = 'Failed: ' + err.message; });
+        };
+        reader.readAsDataURL(file);
+    }
+
     function applySetModeUI() {
         var single = !!(currentConfig && currentConfig.set_mode === 'single');
         ['A', 'B', 'C'].forEach(function(x) {
@@ -1591,6 +1657,7 @@
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
             class_options:          document.getElementById('cfgClasses').value.trim(),
             randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
+            exam_type:              document.getElementById('cfgIgcse').checked ? 'igcse' : 'standard',
             set_mode:               document.getElementById('cfgSetMode').checked ? 'triple' : 'single',
             questions_per_set:      document.getElementById('cfgQPerSet').value.trim(),
             oe_per_set:             document.getElementById('cfgOePerSet').value.trim(),

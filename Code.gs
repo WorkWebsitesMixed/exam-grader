@@ -232,6 +232,7 @@ function getQuestionsResponse() {
   var questions = {A: [], B: [], C: []};
 
   var activeExamId = String(config['exam_id'] || '').trim();
+  var igcseMode    = String(config['exam_type'] || '').toLowerCase() === 'igcse';
 
   for (var r = 1; r < qRows.length; r++) {
     var row = qRows[r];
@@ -259,7 +260,7 @@ function getQuestionsResponse() {
     if (type === 'mc') {
       var opts = [optA, optB, optC, optD];
       var indices = [0, 1, 2, 3];
-      shuffleIndices(indices);
+      if (!igcseMode) { shuffleIndices(indices); }  // IGCSE: fixed printed option order
       q.options  = opts;
       q.shuffled = indices;
       // correctIndex intentionally NOT sent to client — graded server-side
@@ -274,6 +275,8 @@ function getQuestionsResponse() {
   var questionsPerSet = parseInt(config['questions_per_set'] || '0', 10);
   var oePerSet        = parseInt(config['oe_per_set']        || '0', 10);
   var randomizeBank   = (config['randomize_questions'] || 'false').toLowerCase() === 'true';
+  // IGCSE = standardized for everyone: force off bank randomization and sampling.
+  if (igcseMode) { questionsPerSet = 0; oePerSet = 0; randomizeBank = false; }
   ['A', 'B', 'C'].forEach(function(s) {
     if (questionsPerSet > 0 && oePerSet > 0) {
       // Split into typed pools, shuffle each independently if randomize is on
@@ -561,7 +564,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk', 'listImages'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk', 'listImages', 'generateRubrics'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -587,6 +590,7 @@ function doPost(e) {
     if (data.action === 'extractQuestions') { return handleExtractQuestions(data); }
     if (data.action === 'addQuestionsBulk') { return handleAddQuestionsBulk(data); }
     if (data.action === 'listImages')       { return handleListImages(); }
+    if (data.action === 'generateRubrics')  { return handleGenerateRubrics(data); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -1857,6 +1861,7 @@ function createConfigSheet(ss) {
   sheet.appendRow(['questions_per_set',     '0']);
   sheet.appendRow(['oe_per_set',            '0']);
   sheet.appendRow(['set_mode',              'triple']);
+  sheet.appendRow(['exam_type',             'standard']);
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);
@@ -2050,6 +2055,69 @@ function extractJsonArray_(text) {
 
 function jsonOut_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// IGCSE: GENERATE PER-QUESTION RUBRICS FROM A MARKING-SCHEME PDF  (Claude)
+// ============================================================
+function handleGenerateRubrics(data) {
+  try {
+    var b64 = String(data.dataBase64 || '');
+    if (!b64) { return jsonOut_({success: false, error: 'No marking-scheme PDF received.'}); }
+
+    var ss     = SpreadsheetApp.getActiveSpreadsheet();
+    var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+    if (!qSheet) { return jsonOut_({success: false, error: 'No Questions sheet.'}); }
+
+    var rows    = qSheet.getDataRange().getValues();
+    var items   = [];   // open-ended questions only
+    var rowById = {};
+    for (var r = 1; r < rows.length; r++) {
+      var id = String(rows[r][1]).trim();
+      if (!id || String(rows[r][3]).trim() !== 'openEnded') { continue; }  // skip mc + short
+      items.push({id: id, text: String(rows[r][5]).trim()});
+      rowById[id] = r + 1;
+    }
+    if (!items.length) { return jsonOut_({success: false, error: 'No open-ended questions to generate rubrics for.'}); }
+
+    var system =
+      'You write concise grading rubrics for a teacher, derived strictly from an official exam marking scheme. ' +
+      'Base every rubric only on the marking scheme — what earns each mark. Do not invent criteria.';
+    var userText =
+      'Below is a JSON list of open-ended exam questions. Using the attached marking-scheme PDF, write a grading ' +
+      'rubric for each question describing exactly what earns the marks (mark-by-mark where the scheme specifies). ' +
+      'Match each question to its section of the scheme by content.\n\n' +
+      'QUESTIONS:\n' + JSON.stringify(items) + '\n\n' +
+      'Return ONLY a JSON object mapping each question "id" to its rubric string — no prose, no code fences. ' +
+      'If a question has no matching scheme content, map it to an empty string.';
+
+    var text = callClaudeWithPdf_(system, userText, b64, 8000);
+    var map  = extractJsonObject_(text);
+    if (!map) { return jsonOut_({success: false, error: 'Could not parse rubrics from the AI response.', rawSample: String(text || '').slice(0, 1500)}); }
+
+    var updated = 0;
+    for (var id2 in map) {
+      if (!map.hasOwnProperty(id2)) { continue; }
+      var rubric = String(map[id2] || '').trim();
+      if (rubric && rowById[id2]) {
+        qSheet.getRange(rowById[id2], 12, 1, 1).setValue(rubric);  // col 12 = Rubric
+        updated++;
+      }
+    }
+    return jsonOut_({success: true, updated: updated, total: items.length});
+  } catch (err) {
+    return jsonOut_({success: false, error: err.message});
+  }
+}
+
+// Pull the first JSON object out of a model response (tolerates fences / stray prose).
+function extractJsonObject_(text) {
+  if (!text) { return null; }
+  var s     = String(text).replace(/```json/gi, '').replace(/```/g, '');
+  var start = s.indexOf('{');
+  var end   = s.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) { return null; }
+  try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { return null; }
 }
 
 function createQuestionsSheet(ss) {
