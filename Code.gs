@@ -962,6 +962,24 @@ function callClaudeAPI(systemPrompt, userPrompt) {
 }
 
 // ============================================================
+// PHASE 1 TEST — run manually (editor: select testClaudeGrading, press Run).
+// Verifies the Claude call + paragraph feedback. View output in the
+// Execution log. First run will ask you to authorize external requests.
+// Safe to delete once Phase 1 is confirmed working.
+// ============================================================
+function testClaudeGrading() {
+  var rubric = 'Award 1 mark for identifying that the structure is triangulated / a triangle (truss). ' +
+               'Award a 2nd mark for explaining that a triangle cannot change shape / deform under load, ' +
+               'so it stays rigid. Maximum 2 marks.';
+  var answer = 'It is a triangle shape so it is strong and does not move when you push it.';
+  var result = gradeOpenEnded(answer, rubric, 2);
+  Logger.log('MODEL: ' + GRADING_MODEL);
+  Logger.log('SCORE: ' + result.score + ' / 2');
+  Logger.log('FEEDBACK: ' + result.feedback);
+  return result;
+}
+
+// ============================================================
 // WRITE SUBMISSION SUMMARY TO SHEET
 // ============================================================
 function writeSummaryToSheet(d) {
