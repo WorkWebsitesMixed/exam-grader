@@ -1823,6 +1823,7 @@ function createConfigSheet(ss) {
   sheet.appendRow(['randomize_questions',   'false']);
   sheet.appendRow(['questions_per_set',     '0']);
   sheet.appendRow(['oe_per_set',            '0']);
+  sheet.appendRow(['set_mode',              'triple']);
   sheet.appendRow(['grade_boundaries_A',    '2.3:85,2.0:70,1.7:50,1.3:35,1.0:0']);
   sheet.appendRow(['grade_boundaries_B',    '3.3:85,3.0:75,2.7:65,2.3:55,2.0:45,1.7:35,1.3:20,1.0:0']);
   sheet.appendRow(['grade_boundaries_C',    '4.0:90,3.7:80,3.3:70,3.0:60,2.7:50,2.3:40,2.0:30,1.7:20,1.3:10,1.0:0']);

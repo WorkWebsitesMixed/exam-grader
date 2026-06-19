@@ -522,6 +522,17 @@
                         <label>Admin Password</label>
                         <input type="password" id="cfgPassword" placeholder="New password (blank = keep current)" autocomplete="new-password">
                     </div>
+                    <div class="config-field" style="grid-column: 1 / -1;">
+                        <label>Question Sets</label>
+                        <div class="toggle-wrap">
+                            <label class="toggle">
+                                <input type="checkbox" id="cfgSetMode" onchange="updateSetModeLabel()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setModeLabel" class="toggle-label off">Single set</span>
+                        </div>
+                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">On = three sets (A/B/C) with set selection &amp; preview. Off = a single set: students skip set selection and the preview, going straight to class selection then the exam.</p>
+                    </div>
                     <div class="config-field">
                         <label>Randomize from Question Bank</label>
                         <div class="toggle-wrap">
@@ -892,6 +903,8 @@
         document.getElementById('cfgClasses').value   = config.class_options   || '';
         document.getElementById('cfgPassword').value  = '';  // never pre-filled
         document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
+        document.getElementById('cfgSetMode').checked   = (config.set_mode !== 'single');
+        updateSetModeLabel();
         document.getElementById('cfgQPerSet').value    = config.questions_per_set || '0';
         document.getElementById('cfgOePerSet').value   = config.oe_per_set || '0';
 
@@ -929,6 +942,13 @@
         var on  = document.getElementById('cfgRandomize').checked;
         var lbl = document.getElementById('randomizeLabel');
         lbl.textContent = on ? 'On' : 'Off';
+        lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
+    }
+
+    function updateSetModeLabel() {
+        var on  = document.getElementById('cfgSetMode').checked;
+        var lbl = document.getElementById('setModeLabel');
+        lbl.textContent = on ? 'Three sets (A/B/C)' : 'Single set';
         lbl.className   = 'toggle-label ' + (on ? 'on' : 'off');
     }
 
@@ -1302,6 +1322,7 @@
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
             class_options:          document.getElementById('cfgClasses').value.trim(),
             randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
+            set_mode:               document.getElementById('cfgSetMode').checked ? 'triple' : 'single',
             questions_per_set:      document.getElementById('cfgQPerSet').value.trim(),
             oe_per_set:             document.getElementById('cfgOePerSet').value.trim(),
             set_a_label:            document.getElementById('cfgSetALabel').value.trim(),

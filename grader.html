@@ -692,6 +692,7 @@
         }
 
         function applyConfig(config) {
+            examConfig.setMode = (config.set_mode === 'single') ? 'single' : 'triple';
             if (config.exam_duration_minutes) {
                 var mins = parseInt(config.exam_duration_minutes, 10);
                 if (!isNaN(mins) && mins > 0) { examConfig.durationMinutes = mins; }
@@ -818,9 +819,14 @@
                 // Pre-fill form fields
                 document.getElementById('studentFirstName').value = currentFirstName;
                 document.getElementById('studentLastName').value = currentLastName;
-                // Proceed to set selection
+                // Proceed: single-set exams skip set selection + preview and go
+                // straight to the student-info / class screen with Set A.
                 document.getElementById('signInScreen').style.display = 'none';
-                document.getElementById('setSelectionScreen').classList.add('active');
+                if (examConfig.setMode === 'single') {
+                    selectSet('A');
+                } else {
+                    document.getElementById('setSelectionScreen').classList.add('active');
+                }
             } catch (err) {
                 var errEl = document.getElementById('signInError');
                 errEl.textContent = 'Sign-in failed. Please refresh and try again.';
