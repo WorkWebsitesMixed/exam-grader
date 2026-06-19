@@ -642,7 +642,8 @@
                     <button id="qtab-A" class="boundary-tab active" onclick="showQSet('A')">Set A</button>
                     <button id="qtab-B" class="boundary-tab" onclick="showQSet('B')">Set B</button>
                     <button id="qtab-C" class="boundary-tab" onclick="showQSet('C')">Set C</button>
-                    <button class="btn btn-save" onclick="openAddQuestion()" style="margin-left:auto;">+ Add Question</button>
+                    <button class="btn" onclick="openImportModal()" style="margin-left:auto; background:var(--bg); color:var(--primary); border:1px solid var(--border);">⤓ Import from PDF</button>
+                    <button class="btn btn-save" onclick="openAddQuestion()">+ Add Question</button>
                 </div>
                 <div id="qlist-A"></div>
                 <div id="qlist-B" style="display:none;"></div>
@@ -775,6 +776,37 @@
         <div class="modal-footer">
             <button class="btn btn-close" onclick="closeQuestionModal()">Cancel</button>
             <button class="btn btn-save" onclick="saveQuestion()" style="margin-left:10px;">Save Question</button>
+        </div>
+    </div>
+</div>
+
+<!-- IMPORT QUESTIONS MODAL -->
+<div id="importModal" class="modal">
+    <div class="modal-box" style="max-width:680px;">
+        <h2>Import Questions from PDF</h2>
+        <p style="font-size:13px; color:var(--muted); margin-bottom:14px; line-height:1.5;">Upload the question-paper PDF. The AI transcribes each question's exact text, marks, and type. Review the list, then add them. <strong>Figures are not extracted</strong> — attach each one afterward via Edit ▸ Figure/Image.</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+            <div id="impSetField">
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Set</label>
+                <select id="impSet" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                    <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Exam</label>
+                <input type="text" id="impExam" placeholder="e.g. exam_LDR" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+            </div>
+        </div>
+        <div style="margin-bottom:14px;">
+            <input type="file" id="impFile" accept="application/pdf" style="font-size:13px;">
+            <button class="btn btn-save" onclick="extractFromPdf()" style="margin-left:8px;">Extract questions</button>
+            <span id="impStatus" style="font-size:12px; color:var(--muted); margin-left:8px;"></span>
+        </div>
+        <div id="impPreview" style="max-height:340px; overflow-y:auto;"></div>
+        <p id="impError" style="color:var(--error); font-size:13px; margin-top:10px; display:none;"></p>
+        <div class="modal-footer">
+            <button class="btn btn-close" onclick="closeImportModal()">Cancel</button>
+            <button class="btn btn-save" id="impAddBtn" onclick="addImportedQuestions()" style="margin-left:10px; display:none;">Add <span id="impCount">0</span> questions</button>
         </div>
     </div>
 </div>
@@ -1323,6 +1355,104 @@
         document.getElementById('qImageFile').value = '';
         document.getElementById('qImageStatus').textContent = '';
         showQImagePreview('');
+    }
+
+    var importedQuestions = [];
+
+    function openImportModal() {
+        importedQuestions = [];
+        var single = !!(currentConfig && currentConfig.set_mode === 'single');
+        document.getElementById('impSetField').style.display = single ? 'none' : '';
+        document.getElementById('impSet').value = single ? 'A' : currentQSet;
+        document.getElementById('impExam').value = currentConfig.exam_id || '';
+        document.getElementById('impFile').value = '';
+        document.getElementById('impStatus').textContent = '';
+        document.getElementById('impError').style.display = 'none';
+        document.getElementById('impPreview').innerHTML = '';
+        document.getElementById('impAddBtn').style.display = 'none';
+        document.getElementById('importModal').classList.add('active');
+    }
+
+    function closeImportModal() {
+        document.getElementById('importModal').classList.remove('active');
+    }
+
+    function extractFromPdf() {
+        var input  = document.getElementById('impFile');
+        var file   = input.files && input.files[0];
+        var status = document.getElementById('impStatus');
+        var errEl  = document.getElementById('impError');
+        errEl.style.display = 'none';
+        if (!file) { status.textContent = 'Choose a PDF first.'; return; }
+        status.textContent = 'Reading PDF...';
+        var reader = new FileReader();
+        reader.onload = function() {
+            var dataUrl = String(reader.result);
+            var base64  = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
+            status.textContent = 'Extracting with AI (this can take 20-40s)...';
+            fetch(appsScriptUrl, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'extractQuestions', dataBase64: base64, adminPassword: getStoredAdminPassword() })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success) { throw new Error(data.error || 'Extraction failed'); }
+                importedQuestions = data.questions || [];
+                renderImportPreview();
+                status.textContent = 'Found ' + importedQuestions.length + ' question(s). Review below.';
+            })
+            .catch(function(err) { errEl.textContent = err.message; errEl.style.display = 'block'; status.textContent = ''; });
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function renderImportPreview() {
+        var wrap = document.getElementById('impPreview');
+        wrap.innerHTML = '';
+        importedQuestions.forEach(function(q, i) {
+            var typeLabel = q.type === 'mc' ? 'MC' : (q.type === 'short' ? 'Short' : 'Open-ended');
+            var pts = q.points || 1;
+            var opts = (q.options && q.options.length)
+                ? '<div style="font-size:12px; color:var(--muted); margin-top:4px;">Options: ' + q.options.map(escapeHtml).join(' &nbsp;/&nbsp; ') + '</div>'
+                : '';
+            var div = document.createElement('div');
+            div.style.cssText = 'border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:8px;';
+            div.innerHTML = '<div style="font-size:12px; color:var(--muted); margin-bottom:2px;">Q' + (i + 1) + ' &middot; ' + typeLabel + ' &middot; ' + pts + ' pt' + (pts !== 1 ? 's' : '') + '</div>' +
+                '<div style="font-weight:600;">' + escapeHtml(q.text || '') + '</div>' + opts;
+            wrap.appendChild(div);
+        });
+        document.getElementById('impCount').textContent = importedQuestions.length;
+        document.getElementById('impAddBtn').style.display = importedQuestions.length ? '' : 'none';
+    }
+
+    function addImportedQuestions() {
+        if (!importedQuestions.length) { return; }
+        var set  = document.getElementById('impSet').value;
+        var exam = document.getElementById('impExam').value.trim();
+        var btn  = document.getElementById('impAddBtn');
+        var errEl = document.getElementById('impError');
+        errEl.style.display = 'none';
+        btn.disabled = true; btn.textContent = 'Adding...';
+        var payload = importedQuestions.map(function(q) {
+            var opts = q.options || [];
+            return {
+                set: set, exam: exam, type: q.type || 'openEnded', points: q.points || 1, text: q.text || '',
+                optA: opts[0] || '', optB: opts[1] || '', optC: opts[2] || '', optD: opts[3] || '',
+                correctIndex: 0, rubric: '', image: ''
+            };
+        });
+        fetch(appsScriptUrl, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'addQuestionsBulk', questions: payload, adminPassword: getStoredAdminPassword() })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { throw new Error(data.error || 'Add failed'); }
+            closeImportModal();
+            loadQuestions();
+        })
+        .catch(function(err) { errEl.textContent = err.message; errEl.style.display = 'block'; })
+        .finally(function() { btn.disabled = false; btn.innerHTML = 'Add <span id="impCount">' + importedQuestions.length + '</span> questions'; });
     }
 
     function saveQuestion() {

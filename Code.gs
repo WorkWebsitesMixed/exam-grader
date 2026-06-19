@@ -561,7 +561,7 @@ function doPost(e) {
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
     // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage'];
+    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk'];
     if (adminActions.indexOf(data.action) !== -1) {
       if (!checkAdminAuth(data.adminPassword || '')) {
         return ContentService
@@ -584,6 +584,8 @@ function doPost(e) {
     if (data.action === 'resendEmails')     { return handleResendEmails(data); }
     if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
     if (data.action === 'uploadImage')      { return handleUploadImage(data); }
+    if (data.action === 'extractQuestions') { return handleExtractQuestions(data); }
+    if (data.action === 'addQuestionsBulk') { return handleAddQuestionsBulk(data); }
     return handleSubmission(data);
   } catch (err) {
     return ContentService
@@ -1914,6 +1916,124 @@ function testImageSetup() {
   var folder = getImageFolder_();
   Logger.log('Image folder ready: ' + folder.getName() + ' (id ' + folder.getId() + ')');
   return folder.getId();
+}
+
+// ============================================================
+// IMPORT QUESTIONS FROM A QUESTION-PAPER PDF  (Claude)
+// ============================================================
+function handleExtractQuestions(data) {
+  try {
+    var b64 = String(data.dataBase64 || '');
+    if (!b64) { return jsonOut_({success: false, error: 'No PDF received.'}); }
+
+    var system =
+      'You extract exam questions from a question-paper PDF for a teacher. ' +
+      'Transcribe text EXACTLY as printed (verbatim) — never paraphrase, summarise, or invent content. ' +
+      'Ignore page headers/footers, barcodes, cover/instruction pages, and blank pages.';
+
+    var userText =
+      'Extract every question and sub-question from this exam paper. ' +
+      'Return ONLY a JSON array — no prose, no markdown code fences. Each element:\n' +
+      '{"text": "<verbatim question text, including any sub-part letter like (a)(i)>", ' +
+      '"type": "mc" | "short" | "openEnded", ' +
+      '"points": <integer marks shown in brackets, default 1>, ' +
+      '"options": [<printed multiple-choice options as strings, else empty array>]}\n' +
+      'Use "mc" only when multiple-choice options are printed. Use "short" for one-line factual ' +
+      'answers (e.g. "Name a..." typically worth 1 mark). Otherwise use "openEnded". ' +
+      'Do NOT include answers or mark schemes.';
+
+    var text = callClaudeWithPdf_(system, userText, b64, 8000);
+    var arr  = extractJsonArray_(text);
+    if (!arr) { return jsonOut_({success: false, error: 'Could not parse questions from the AI response.'}); }
+
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var q = arr[i] || {};
+      var t = String(q.type || 'openEnded');
+      if (t !== 'mc' && t !== 'short' && t !== 'openEnded') { t = 'openEnded'; }
+      var opts = (q.options instanceof Array) ? q.options.map(function(o) { return String(o); }) : [];
+      out.push({ text: String(q.text || '').trim(), type: t, points: Number(q.points) || 1, options: opts });
+    }
+    return jsonOut_({success: true, questions: out});
+  } catch (err) {
+    return jsonOut_({success: false, error: err.message});
+  }
+}
+
+function handleAddQuestionsBulk(data) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
+  if (!qSheet) { qSheet = createQuestionsSheet(ss); }
+  var list = data.questions || [];
+  var rows = [];
+  for (var i = 0; i < list.length; i++) {
+    var q  = list[i] || {};
+    var id = String(q.set || 'A').toUpperCase() + '_' + Date.now() + '_' + i;
+    rows.push([
+      String(q.set || 'A').toUpperCase(), id, String(q.section || ''),
+      String(q.type || 'openEnded'), Number(q.points) || 1, String(q.text || ''),
+      String(q.optA || ''), String(q.optB || ''), String(q.optC || ''), String(q.optD || ''),
+      q.type === 'mc' ? (Number(q.correctIndex) || 0) : '',
+      String(q.rubric || ''), String(q.exam || ''), String(q.image || '')
+    ]);
+  }
+  if (rows.length) {
+    qSheet.getRange(qSheet.getLastRow() + 1, 1, rows.length, 14).setValues(rows);
+  }
+  return jsonOut_({success: true, added: rows.length});
+}
+
+// Call Claude with a PDF document block + a text instruction. Returns the text response.
+function callClaudeWithPdf_(systemPrompt, userText, b64, maxTokens) {
+  var url = 'https://api.anthropic.com/v1/messages';
+  var payload = JSON.stringify({
+    model: GRADING_MODEL,
+    max_tokens: maxTokens || 4096,
+    system: systemPrompt,
+    messages: [{
+      role: 'user',
+      content: [
+        {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: b64}},
+        {type: 'text', text: userText}
+      ]
+    }]
+  });
+  var options = {
+    method: 'post', contentType: 'application/json',
+    headers: {'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01'},
+    payload: payload, muteHttpExceptions: true
+  };
+  var delays = [2000, 4000, 8000];
+  for (var attempt = 0; attempt <= delays.length; attempt++) {
+    var response = UrlFetchApp.fetch(url, options);
+    var code     = response.getResponseCode();
+    if (code === 200) {
+      var json   = JSON.parse(response.getContentText());
+      var blocks = json.content || [];
+      for (var b = 0; b < blocks.length; b++) {
+        if (blocks[b].type === 'text' && blocks[b].text) { return blocks[b].text; }
+      }
+      return '';
+    }
+    if ((code === 429 || code >= 500) && attempt < delays.length) { Utilities.sleep(delays[attempt]); }
+    else if (code === 401 || code === 403) { throw new Error('Claude API key not configured or invalid.'); }
+    else { throw new Error('Claude API error ' + code + ': ' + response.getContentText().slice(0, 300)); }
+  }
+  throw new Error('Claude API temporarily unavailable.');
+}
+
+// Pull the first JSON array out of a model response (tolerates code fences / stray prose).
+function extractJsonArray_(text) {
+  if (!text) { return null; }
+  var s     = String(text).replace(/```json/gi, '').replace(/```/g, '');
+  var start = s.indexOf('[');
+  var end   = s.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) { return null; }
+  try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { return null; }
+}
+
+function jsonOut_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function createQuestionsSheet(ss) {
