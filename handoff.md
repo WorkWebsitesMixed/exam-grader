@@ -1,6 +1,6 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-06-03 (session 5)_
+_Last updated: 2026-06-10 (session 6)_
 
 ---
 
@@ -24,6 +24,7 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - **Admin panel (`admin.html`):** Password-protected. Grade distribution chart, class analysis, MC distractor analysis, grade override, exam settings, grade boundaries editor, question manager, bulk recalculate, Regrade All MC, Reload submissions, delete submission.
 - **Question randomization and bank sampling** (`randomize_questions`, `questions_per_set`, `oe_per_set` in Config sheet) work independently.
 - **Duplicate guard:** `email + set + exam_id` — blocks re-submission of the same set within the same exam.
+- **Set card labels configurable from admin:** `set_a_label`, `set_a_max_grade`, `set_a_description` (and B, C equivalents) in Config sheet control the set selection cards on the exam page. No longer hardcoded in `grader.html`.
 
 ### Question bank — current state
 - **Source of truth:** `/home/andresforero/Documents/Marymount/10th planning/Project/Exam_Grading.csv`
@@ -38,6 +39,21 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 ---
 
 ## 3. Session History
+
+### Session 6 (2026-06-10)
+
+#### Set card labels driven from Config sheet (was hardcoded)
+- **Problem:** Set A/B/C cards on the exam page showed hardcoded label, max grade, and description (e.g. "SET A — Standard / Maximum Grade: 2.3 / Foundational questions."). When the teacher changed rubrics so all sets used the same grade ceiling, the cards still showed stale values.
+- **Fix — `Code.gs`:** Added 9 default rows to `createConfigSheet()`: `set_a_label`, `set_a_max_grade`, `set_a_description` (and B, C equivalents). Defaults match the old hardcoded values so existing spreadsheets see no change until the teacher edits them.
+- **Fix — `grader.html`:** Added a loop at the end of `applyConfig()` that overwrites `SET_META[set].label/maxGrade/description` from the config keys before `buildSetOptions()` reads them. Hardcoded fallback values in `SET_META` remain as a safety net if the keys are absent.
+- **Fix — `admin.html`:** Added "Set Card Labels" subsection inside ⚙ Exam Settings config-grid with 9 inputs (label, max grade, description per set). Wired into `applyConfig()` (populates fields on load) and `saveConfig()` (includes keys in the POST).
+- **Deployment note:** `createConfigSheet` only runs for new spreadsheets. Existing installations must manually add the 9 keys to the Config sheet, or save via the admin panel once (the Save button upserts all keys including blank ones).
+
+#### Multi-exam support discussion
+- Teacher needs to run exams for 10th, 11th, and 12th grade simultaneously — different topics, not just different sets.
+- **Two options discussed:** (A) URL-parameter routing (`?exam=exam_id`) with one spreadsheet; (B) separate deployment per grade for full isolation.
+- Option A recommended: teacher posts a different link per grade in each Google Classroom. Minimal code change, all results in one place, existing `exam_id` duplicate guard already supports it.
+- **Teacher resolved multi-exam routing independently** — no code changes made this session.
 
 ### Session 5 (2026-06-03)
 
@@ -90,7 +106,7 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 ## 4. Open Tasks
 
 ### Immediate
-- [ ] **Deploy updated Code.gs** (session 5 fixes) — `handleRegradeAllMC` column fix and feedback regex fix require a new web app version (Deploy → Manage deployments → New version). After deploying, run **Regrade All MC** on existing submissions to correct the MAX_SCORE and AI_FEEDBACK columns.
+- [ ] **Deploy updated Code.gs** (session 5 + 6 fixes) — requires a new web app version (Deploy → Manage deployments → New version). After deploying: run **Regrade All MC** to fix MAX_SCORE/AI_FEEDBACK columns (session 5), and add the 9 `set_*` keys to the Config sheet or just Save Settings once from the admin panel (session 6).
 
 ### In progress / agreed but not yet built
 
@@ -100,14 +116,9 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - MailApp quota: 100/day (free Gmail), 1500/day (Workspace). Confirm dialog should show count.
 - Already implemented in `Code.gs` (`handleResendEmails`) but not yet wired to a button in `admin.html`.
 
-#### Multi-exam support (Option A — single spreadsheet)
-**Architecture decided:**
-- Add `exam_id` config key (e.g. `exam_LDR`, `exam_transistors`). Teacher changes this in ⚙ Exam Settings before each new exam.
-- Add `Exam` column to Questions sheet (already exists) — questions are filtered by active `exam_id`.
-- `EXAM_ID` column already in Submissions sheet.
-- Duplicate guard already uses `email + set + exam_id`.
-- Admin panel needs an Exam filter (alongside class/set). Stats should respect it.
-- Sets A/B/C remain independent per exam.
+#### Multi-exam support (concurrent exams — different grades/topics)
+- Teacher resolved routing independently (session 6).
+- Admin panel still lacks an **Exam filter** — when multiple `exam_id` values exist in Submissions, the admin shows all of them mixed together. Stats, grade distribution, and distractor analysis should respect an exam filter the same way they respect class/set filters.
 - **Not yet implemented** (admin filter side).
 
 ### Known pending features / bugs
@@ -151,9 +162,11 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - `handleResendEmails()`: implemented, not yet wired to admin UI button
 - `oe_per_set` sampling: splits bank into typed pools, draws exact OE count first
 - `oe_per_set = 0` in `createConfigSheet()` defaults
+- `createConfigSheet()` adds 9 set-card config defaults: `set_a_label`, `set_a_max_grade`, `set_a_description` (and B, C)
 
 **`grader.html`**
 - `startExam()` async: POSTs `checkDuplicate` before showing questions; handles duplicate + network-error states
+- `applyConfig()` now overwrites `SET_META` from `set_*` config keys before `buildSetOptions()` renders the cards
 
 **`admin.html`**
 - Regrade All MC button (purple, ⚙ Settings) → `action: 'regrademc'`
@@ -162,6 +175,7 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - "Open-Ended per Set" input in ⚙ Exam Settings
 - MC Distractor Analysis collapsible panel (set tabs, lazy load, horizontal bars)
 - Grade Distribution chart: sorted numeric x-axis, grouped bars by set
+- "Set Card Labels" subsection in ⚙ Exam Settings: 9 inputs (label, max grade, description per set A/B/C), wired to `applyConfig()` and `saveConfig()`
 
 ---
 

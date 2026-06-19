@@ -915,7 +915,8 @@ function callGeminiAPI(prompt) {
   var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
   var payload = JSON.stringify({
     contents: [{parts: [{text: prompt}]}],
-    generationConfig: {temperature: 0.1, maxOutputTokens: 500}
+    generationConfig: {temperature: 0.1, maxOutputTokens: 1024},
+    thinkingConfig: {thinkingBudget: 0}
   });
   var options = {method: 'post', contentType: 'application/json', payload: payload, muteHttpExceptions: true};
   var delays  = [2000, 4000, 8000];
