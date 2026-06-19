@@ -719,7 +719,7 @@
     <div class="modal-box" style="max-width:600px;">
         <h2 id="qModalTitle">Add Question</h2>
         <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:14px;">
-            <div>
+            <div id="qSetField">
                 <label style="font-size:11px; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:4px;">Set</label>
                 <select id="qSet" style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
                     <option value="A">A</option>
@@ -896,6 +896,7 @@
 
     function applyConfig(config) {
         currentConfig = config;
+        applySetModeUI();
 
         if (config.exam_title) {
             document.getElementById('adminTitle').textContent = config.exam_title + ' — Admin';
@@ -1139,6 +1140,21 @@
             msg.textContent = '';
         })
         .catch(function() { msg.textContent = 'Failed to load questions.'; });
+    }
+
+    // In single-set mode, hide all set tabs (Questions + Grade Boundaries) and
+    // the Set dropdown in the question form; everything defaults to Set A.
+    function applySetModeUI() {
+        var single = !!(currentConfig && currentConfig.set_mode === 'single');
+        ['A', 'B', 'C'].forEach(function(x) {
+            var qt = document.getElementById('qtab-' + x);
+            if (qt) { qt.style.display = single ? 'none' : ''; }
+            var bt = document.getElementById('tab-' + x);
+            if (bt) { bt.style.display = single ? 'none' : ''; }
+        });
+        var qSetField = document.getElementById('qSetField');
+        if (qSetField) { qSetField.style.display = single ? 'none' : ''; }
+        if (single) { currentQSet = 'A'; }
     }
 
     function showQSet(s) {
