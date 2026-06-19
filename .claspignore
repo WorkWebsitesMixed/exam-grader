@@ -1,0 +1,7 @@
+# Apps Script backend is a pure JSON API — push only Code.gs + appsscript.json.
+# Everything below is the GitHub Pages frontend or repo docs, NOT part of the backend.
+*.html
+*.md
+.claude/**
+.git/**
+node_modules/**
