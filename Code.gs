@@ -750,7 +750,7 @@ function handleSubmission(data) {
     var authPoints = (qInfoOe ? qInfoOe.points : 0) || q.points;
     var rubricText = qInfoOe ? qInfoOe.rubric : (q.rubric || '');
     var result     = (qInfoOe && qInfoOe.type === 'short')
-                     ? gradeShortAnswer(q.text, rubricText, authPoints)
+                     ? gradeShortAnswer(q.text, rubricText, authPoints, q.questionText)
                      : gradeOpenEnded(q.text, rubricText, authPoints);
     openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback});
     openAIScores.push(result.score);
@@ -932,7 +932,7 @@ function gradeOpenEnded(studentAnswer, rubric, maxPoints) {
 
 // Short-answer grading — exact normalized match against accepted answers
 // (comma-separated, stored in the Rubric column). No AI call.
-function gradeShortAnswer(studentAnswer, acceptedCsv, maxPoints) {
+function gradeShortAnswer(studentAnswer, acceptedCsv, maxPoints, questionText) {
   var ans = normalizeShort_(studentAnswer);
   if (!ans) { return {score: 0, feedback: 'No answer provided.'}; }
   var list = String(acceptedCsv || '').split(',');
@@ -942,7 +942,29 @@ function gradeShortAnswer(studentAnswer, acceptedCsv, maxPoints) {
       return {score: maxPoints, feedback: 'Correct.'};
     }
   }
-  return {score: 0, feedback: 'Incorrect. Accepted answer(s): ' + String(acceptedCsv || '').trim() + '.'};
+  // No exact match — fall back to AI (handles synonyms, abbreviations, spelling).
+  return gradeShortWithAI_(studentAnswer, acceptedCsv, maxPoints, questionText);
+}
+
+function gradeShortWithAI_(studentAnswer, acceptedCsv, maxPoints, questionText) {
+  var system =
+    'You are marking a short-answer exam question against the list of accepted answers from the ' +
+    'official marking scheme. Accept answers that mean the same thing — synonyms, abbreviations, ' +
+    'and minor spelling differences all count. Do not accept answers that are actually wrong.';
+  var userPrompt =
+    'QUESTION: ' + (questionText || '') + '\n' +
+    'ACCEPTED ANSWERS (from marking scheme): ' + String(acceptedCsv || '') + '\n' +
+    'STUDENT ANSWER: ' + studentAnswer + '\n' +
+    'MAXIMUM MARKS: ' + maxPoints + '\n\n' +
+    'Decide whether the student answer is acceptable. Respond in EXACTLY this format, nothing else:\n' +
+    'SCORE: <0 or ' + maxPoints + '>\n' +
+    'FEEDBACK: <one short sentence>';
+  var responseText = callClaudeAPI(system, userPrompt);
+  var scoreMatch = responseText.match(/SCORE:\s*(\d+)/i);
+  var fbMatch    = responseText.match(/FEEDBACK:?\s+([\s\S]+)/i);
+  var score      = scoreMatch ? Math.min(maxPoints, Math.max(0, parseInt(scoreMatch[1], 10))) : 0;
+  var feedback   = fbMatch ? fbMatch[1].trim() : 'Marked.';
+  return {score: score, feedback: feedback};
 }
 
 function normalizeShort_(s) {
@@ -2074,22 +2096,26 @@ function handleGenerateRubrics(data) {
     var rowById = {};
     for (var r = 1; r < rows.length; r++) {
       var id = String(rows[r][1]).trim();
-      if (!id || String(rows[r][3]).trim() !== 'openEnded') { continue; }  // skip mc + short
-      items.push({id: id, text: String(rows[r][5]).trim()});
+      var qtype = String(rows[r][3]).trim();
+      if (!id || (qtype !== 'openEnded' && qtype !== 'short')) { continue; }  // skip mc
+      items.push({id: id, type: qtype, text: String(rows[r][5]).trim()});
       rowById[id] = r + 1;
     }
-    if (!items.length) { return jsonOut_({success: false, error: 'No open-ended questions to generate rubrics for.'}); }
+    if (!items.length) { return jsonOut_({success: false, error: 'No open-ended or short-answer questions to generate rubrics for.'}); }
 
     var system =
       'You write concise grading rubrics for a teacher, derived strictly from an official exam marking scheme. ' +
       'Base every rubric only on the marking scheme — what earns each mark. Do not invent criteria.';
     var userText =
-      'Below is a JSON list of open-ended exam questions. Using the attached marking-scheme PDF, write a grading ' +
-      'rubric for each question describing exactly what earns the marks (mark-by-mark where the scheme specifies). ' +
-      'Match each question to its section of the scheme by content.\n\n' +
+      'Below is a JSON list of exam questions (each with a "type"). Using the attached marking-scheme PDF, ' +
+      'produce a marking aid for each, matched to its scheme section by content:\n' +
+      '- type "openEnded": a concise grading rubric describing exactly what earns the marks ' +
+      '(mark-by-mark where the scheme specifies).\n' +
+      '- type "short": a comma-separated list of ALL acceptable answers from the scheme (include the ' +
+      'synonyms / alternatives the scheme allows).\n\n' +
       'QUESTIONS:\n' + JSON.stringify(items) + '\n\n' +
-      'Return ONLY a JSON object mapping each question "id" to its rubric string — no prose, no code fences. ' +
-      'If a question has no matching scheme content, map it to an empty string.';
+      'Return ONLY a JSON object mapping each question "id" to its string (rubric or accepted-answers list) — ' +
+      'no prose, no code fences. If a question has no matching scheme content, map it to an empty string.';
 
     var text = callClaudeWithPdf_(system, userText, b64, 8000);
     var map  = extractJsonObject_(text);

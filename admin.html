@@ -1288,9 +1288,9 @@
             '<th style="padding:7px 10px;"></th>' +
             '</tr></thead><tbody>';
         qs.forEach(function(q, i) {
-            var typeLabel = q.type === 'mc' ? 'MC' : 'OE';
-            var typeBg    = q.type === 'mc' ? '#DBEAFE' : '#D1FAE5';
-            var typeColor = q.type === 'mc' ? '#1D4ED8' : '#065F46';
+            var typeLabel = q.type === 'mc' ? 'MC' : (q.type === 'short' ? 'Short' : 'OE');
+            var typeBg    = q.type === 'mc' ? '#DBEAFE' : (q.type === 'short' ? '#FEF3C7' : '#D1FAE5');
+            var typeColor = q.type === 'mc' ? '#1D4ED8' : (q.type === 'short' ? '#92400E' : '#065F46');
             var preview   = q.text.length > 80 ? q.text.slice(0, 80) + '…' : q.text;
             var rowBg     = i % 2 === 0 ? 'background:var(--bg);' : '';
             var examLabel = q.exam || '<span style="color:var(--muted); font-style:italic;">all</span>';
