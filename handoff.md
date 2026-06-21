@@ -1,12 +1,32 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-06-10 (session 6)_
+_Last updated: 2026-06-20 (session 7 — v2 IGCSE rebuild)_
+
+---
+
+## 0. v2 STATUS (read this first)
+
+The project is mid-**v2 rebuild** to support **Cambridge IGCSE mock exams**. Everything in §1–§6 that predates v2 is historical (v1, Gemini-based). **All v2 work lives on the `v2-igcse` git branch** against a **dev** Apps Script copy + dev Sheet; `main` holds the preserved v1 snapshot and the **live site is untouched**. Code lives in git via **clasp** (manages `Code.gs` + `appsscript.json` only; the HTML is the GitHub Pages frontend).
+
+**Architecture (confirmed):** Apps Script is a **pure JSON API**; the HTML (grader/admin/results/index) is the **GitHub Pages frontend** and finds the backend via a `?src=<exec-url>` query param.
+
+**v2 build status — Phases 0–4 done & validated; preview deployed:**
+- **Backend = Claude** (Anthropic Messages API via `UrlFetchApp`); key in Script Property `ANTHROPIC_API_KEY`; `GRADING_MODEL = 'claude-sonnet-4-6'`. OE answers get a **detailed paragraph** of feedback.
+- **Question types:** `mc`, `openEnded` (AI), `short` (hybrid: exact normalized match → AI fallback). Short accepted-answers live in the **Rubric** column. Rubric/accepted answers are **never sent to students** (server reads them from the sheet at grade time).
+- **IGCSE mode** (`exam_type` config = `standard`|`igcse`): backend ENFORCES standardization — ignores `randomize_questions`, `questions_per_set`, `oe_per_set`, and skips MC option shuffling (fixed printed order); admin greys out those controls.
+- **PDF features (Claude document blocks):** import questions from the question-paper PDF (verbatim text/marks/type — figures NOT auto-extracted); generate per-question rubrics + short accepted-answers from the marking-scheme PDF (`generateRubrics`).
+- **Question images:** stored in each teacher's own Drive (`DriveApp`, link-shared), embedded via `https://drive.google.com/thumbnail?id=<id>&sz=w1600`. Reuse picker (one upload, many references = same file id); grader renders a shared figure **once per contiguous run** (safe because IGCSE order is fixed).
+- **Admin:** statistics panels removed; settings collapsed by default; `set_mode` single|triple (single skips set selection + preview).
+- **Questions sheet now has 14 cols** (added `Image` as col 14, after `Exam`).
+- **Preview deployed:** `https://workwebsitesmixed.github.io/exam-grader-v2-preview/` (separate public repo in the WorkWebsitesMixed org → same Sign-In origin as production; points at the dev backend). Full student flow validated end-to-end.
+
+**Remaining:** Phase 5 (multi-teacher template-copy model + registry); real go-live deploy; (future) question bank with topic+grade tags. Deferred: drawing/annotation answers (canvas + vision).
 
 ---
 
 ## 1. The Goal
 
-An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T classes. Students take timed exams in the browser; multiple-choice questions are graded server-side; open-ended questions are graded by Gemini AI. Teachers manage everything (questions, settings, overrides) through an admin panel. The system must prevent cheating, handle duplicate submissions, and email results automatically.
+An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T classes. Students take timed exams in the browser; multiple-choice and short answers are graded server-side; open-ended (and ambiguous short) answers are graded by **Claude**. Teachers manage everything (questions, settings, marking schemes, overrides) through an admin panel. The system must prevent cheating, handle duplicate submissions, and email results automatically.
 
 ---
 
@@ -39,6 +59,22 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 ---
 
 ## 3. Session History
+
+### Session 7 (2026-06-19 → 06-20) — v2 IGCSE rebuild
+
+Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site untouched. Adopted **clasp** so `.gs`/`.html` live in git.
+
+- **Phase 0 — production-safe setup:** committed v1 snapshot to `main`; branched `v2-igcse`; wired clasp to the dev backend (manages only `Code.gs` + `appsscript.json`; HTML excluded via `.claspignore`). Confirmed Apps Script = JSON API, HTML = Pages frontend via `?src=`.
+- **Phase 1 — Claude grading:** replaced Gemini with the Anthropic Messages API (`callClaudeAPI`, `gradeOpenEnded`); one detailed paragraph per OE answer; `ANTHROPIC_API_KEY` in Script Properties.
+- **Phase 2 — admin UX:** removed all statistics panels (grade chart, class analysis, MC distractors, summary cards); settings collapse by default; `set_mode` single|triple toggle (single skips set selection + preview → class → exam).
+- **Phase 3 — question images:** `Image` column (14th); `uploadImage` saves to the teacher's Drive (`DriveApp`, link-shared); rendered in grader/admin/edit form.
+- **Phase 4a — short type:** exact normalized match, **server-authoritative** (rubric/accepted answers read from sheet, no longer sent to students — closed a leak).
+- **Phase 4b — PDF import:** `extractQuestions` sends the question paper to Claude → verbatim questions JSON → `addQuestionsBulk`. Figures attached by hand afterward.
+- **Phase 4c — IGCSE mode:** `exam_type` toggle enforces standardization (no randomize/sample, fixed MC option order, greyed controls); marking-scheme PDF → `generateRubrics` writes a rubric per OE question and accepted-answers per short question (`extractJsonObject_`).
+- **Phase 4d — reusable figures:** `listImages` gallery + reuse picker (same file id across questions); grader suppresses a figure repeated from the previous question.
+- **Phase 4 polish:** short grading made **hybrid** (exact → AI fallback via `gradeShortWithAI_`); distinct "Short" type label in the admin question list.
+- **Validation:** deployed a Pages **preview** (separate org repo `exam-grader-v2-preview`, same origin) and validated the full student flow (single-set, images/dedupe, short inputs, fixed order, live grading).
+- **Ops lessons:** `clasp push` only updates HEAD — must `clasp deploy -i <id>` to update the live `/exec` (frozen version); this caused a "feature not working" red herring. Google **OAuth client is on the work account**; Apps Script/Drive/GitHub are on personal (matters for the sell-to-school plan).
 
 ### Session 6 (2026-06-10)
 
@@ -105,10 +141,13 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 
 ## 4. Open Tasks
 
-### Immediate
-- [ ] **Deploy updated Code.gs** (session 5 + 6 fixes) — requires a new web app version (Deploy → Manage deployments → New version). After deploying: run **Regrade All MC** to fix MAX_SCORE/AI_FEEDBACK columns (session 5), and add the 9 `set_*` keys to the Config sheet or just Save Settings once from the admin panel (session 6).
+### Immediate (v2)
+- [ ] **Phase 5 — multi-teacher template-copy model + registry.** Each teacher runs their own copy bound to their own Google account (data in their Drive, their quota); main admin gates access. Decide ownership of the master template, shared frontend repo, and OAuth client given the possible **sell-to-school**.
+- [ ] **Real go-live** of v2 (point the production frontend at a production v2 backend — promote the dev copy or update the live project) once the preview is signed off.
+- [ ] **Remove temporary helpers before handover:** `testClaudeGrading()`, `testImageSetup()` in `Code.gs`; the `http://localhost:8000` dev origin in the OAuth client.
+- [ ] (Future) **Question bank** — tag questions by topic + grade to save/reuse across exams.
 
-### In progress / agreed but not yet built
+### v1-era items (still valid for the live site; re-evaluate for v2)
 
 #### Resend Results Emails button
 - **Agreed design:** Button in the submissions toolbar. Respects current class, set, and date filters. Shows "Send X emails?" confirmation before firing.
@@ -181,12 +220,17 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 
 ## 6. Critical Rules
 
+- **(v2) Build on `v2-igcse` against the DEV backend.** Never touch the live `/exec` (`AKfycby0QSD…`) or `main`'s v1 code while building v2.
+- **(v2) After any `Code.gs` push, run `clasp deploy -i <dev deploymentId>`** or the change won't be live on `/exec` (it serves a frozen version; `clasp push` only updates HEAD). See §Known data state for the id.
+- **(v2) Rubrics & short accepted-answers are NEVER sent to students** — the server reads them from the Questions sheet at grade time.
+- **(v2) IGCSE mode must stay standardized** — backend forces off randomization/sampling and fixes MC option order; do not reintroduce per-student variation for IGCSE exams.
+- **(v2) Questions sheet is 14 columns** — `…Rubric | Exam | Image`. For `short` questions, accepted answers are stored in the `Rubric` column.
 - **Never send `correctIndex` to the client.** MC grading is 100% server-side.
 - **`CorrectIndex` in the Questions sheet is 1-based (1=A … 4=D).** Code subtracts 1 before indexing. Writing 0 → cidx=−1 → `undefined` → every answer marked wrong. This has burned us twice.
 - **`Exam_Grading.csv` CorrectIndex is also 1-based** — matches what the sheet expects. Do not revert to 0-based.
 - **Always use `safeJson()` for responses containing user-entered text** (names, answers, feedback). Plain status responses can use `JSON.stringify()`. Accented characters (é, á, ó) will garble otherwise.
 - **`appShell` must be visible before `renderTable()` in admin.html.** The chart reads `clientWidth` — if hidden, it draws at 0px.
-- **Every `Code.gs` change requires a new web app deployment.** URL does not change; bump the version in Apps Script editor.
+- **Deploying `Code.gs`:** v1 — bump the web-app version in the editor. **v2 — `clasp push` then `clasp deploy -i <deploymentId>`** (push alone does not update `/exec`).
 - **All JS in `Code.gs` must be ES5-compatible** (Google Apps Script runtime). No `const`/`let`, no arrow functions, no template literals.
 - **Admin password checked on every admin POST** — never cache beyond `sessionStorage`.
 
@@ -194,3 +238,10 @@ An AI-powered online exam system for Marymount school (Bogotá, Colombia), D&T c
 - Google Client ID: `878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com`
 - Domain restriction: `hd: 'marymount.edu.co'` in `grader.html` and `results.html`
 - Grade boundaries hardcoded as fallback in `GRADE_BOUNDARIES`; overridden at runtime by `grade_boundaries_A/B/C` in Config sheet
+
+### v2 deployments & accounts (session 7)
+- **Dev backend `/exec`** (build/test here): `https://script.google.com/macros/s/AKfycbyeQbG1xIFVgK6XNeZ1iECYOBll4rv4zrICDPMcj2xGQwhUNvPhkGJN-gAWD4D5M9KeDQ/exec` (deployment id `AKfycbye…`, use with `clasp deploy -i`). A `@HEAD` deployment `AKfycbzoaDdPausIF6rukZXzyDFgFy6yp_2JUp-scuiw9Bpa` always serves the latest push.
+- **LIVE/production backend `/exec`** — separate Apps Script project, **do NOT touch:** `…/macros/s/AKfycby0QSDaQ6TiLvxshHo-lhspmSHK1xCBKrF3xMY1Ev1RCkL6lNx6TYcvGZbDFHQsVwlQ/exec`.
+- **Production frontend (Pages):** `https://workwebsitesmixed.github.io/exam-grader/` (repo `WorkWebsitesMixed/exam-grader`, an org Dyrtull admins). **v2 preview:** `https://workwebsitesmixed.github.io/exam-grader-v2-preview/` (public repo, points at dev backend).
+- **Accounts:** GitHub login `Dyrtull`. OAuth client `878760918876-…` is in the **work/school** Google account; Apps Script, Drive, dev Google-Cloud projects, and GitHub are on the **personal** account — relevant to a future school handover.
+- **Local dev preview:** `python3 -m http.server 8000` in the repo; `http://localhost:8000` is an authorized OAuth origin. Open `localhost:8000/<page>.html?src=<dev /exec>`.
