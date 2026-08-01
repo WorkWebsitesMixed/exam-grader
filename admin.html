@@ -901,7 +901,9 @@
         .then(function(r) { return r.json(); })
         .then(function(subData) {
             document.getElementById('loadingScreen').style.display = 'none';
-            if (!subData.submissions) { throw new Error('Unexpected response from server.'); }
+            if (!subData.submissions) {
+                throw new Error(subData.error || 'Unexpected response from server.');
+            }
             pendingSubData = subData;
             renderApp();
         })
@@ -930,6 +932,8 @@
                 document.getElementById('passwordScreen').style.display = 'none';
                 loadSubmissions();
             } else {
+                document.getElementById('passwordError').textContent =
+                    data.error || 'Incorrect password. Try again.';
                 document.getElementById('passwordError').style.display = 'block';
                 document.getElementById('passwordInput').value = '';
                 document.getElementById('passwordInput').focus();

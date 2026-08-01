@@ -144,16 +144,66 @@ function getAdminPassword() {
   return '';
 }
 
-function checkAdminAuth(providedPassword) {
+// Length-independent-ish compare: no early exit on the first differing character.
+// NOTE: JS string ops are not guaranteed constant time and password length is
+// still observable; this only removes the obvious early-return timing signal.
+function constantTimeEquals_(a, b) {
+  a = String(a);
+  b = String(b);
+  var diff = a.length ^ b.length;
+  var n = Math.max(a.length, b.length);
+  for (var i = 0; i < n; i++) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  return diff === 0;
+}
+
+// Single place that decides what may leave the Config sheet over the wire.
+// Key-name based so keys added later via updateConfig can't silently leak.
+function isSecretConfigKey_(key) {
+  var k = String(key).trim().toLowerCase();
+  return k === 'admin_password' ||
+         k.indexOf('password') !== -1 ||
+         k.indexOf('secret')   !== -1 ||
+         k.indexOf('api_key')  !== -1 ||
+         k.indexOf('apikey')   !== -1 ||
+         k.indexOf('token')    !== -1;
+}
+
+function publicConfig_(config) {
+  var safe = {};
+  for (var k in config) {
+    if (!isSecretConfigKey_(k)) { safe[k] = config[k]; }
+  }
+  return safe;
+}
+
+// FAIL CLOSED: with no admin_password configured in the Config sheet, every
+// admin action is denied. Returns {ok, error, errorCode} so the admin panel can
+// tell "not set up" apart from "wrong password".
+function checkAdminAuthResult(providedPassword) {
   var stored = getAdminPassword();
-  if (!stored) return true; // no password configured = open
-  return String(providedPassword) === stored;
+  if (!String(stored).trim()) {
+    return {
+      ok: false,
+      errorCode: 'admin_password_not_configured',
+      error: 'admin_password is not configured in the Config sheet. Admin actions are disabled until a password is set.'
+    };
+  }
+  if (!constantTimeEquals_(providedPassword, stored)) {
+    return {ok: false, errorCode: 'invalid_password', error: 'Incorrect password'};
+  }
+  return {ok: true, errorCode: null, error: null};
+}
+
+function checkAdminAuth(providedPassword) {
+  return checkAdminAuthResult(providedPassword).ok;
 }
 
 function handleVerifyAdmin(data) {
-  var ok = checkAdminAuth(data.password || '');
+  var auth = checkAdminAuthResult(data.password || '');
   return ContentService
-    .createTextOutput(JSON.stringify({success: ok, error: ok ? null : 'Incorrect password'}))
+    .createTextOutput(JSON.stringify({success: auth.ok, error: auth.error, errorCode: auth.errorCode}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -316,11 +366,8 @@ function getQuestionsResponse() {
     }
   });
 
-  // Strip admin_password before sending to students
-  var safeConfig = {};
-  for (var ck in config) {
-    if (ck !== 'admin_password') { safeConfig[ck] = config[ck]; }
-  }
+  // Strip secrets before sending to students
+  var safeConfig = publicConfig_(config);
 
   return ContentService
     .createTextOutput(JSON.stringify({success: true, questions: questions, config: safeConfig}))
@@ -345,11 +392,14 @@ function getConfigResponse() {
     var v = String(configRows[i][1]).trim();
     if (k) { config[k] = v; }
   }
-  var adminPw = config['admin_password'] || '';
-  delete config['admin_password'];
-  config['admin_password_required'] = adminPw !== '' ? 'true' : 'false';
+  var adminPw = String(config['admin_password'] || '').trim();
+  var safeConfig = publicConfig_(config);
+  // Always 'true' now that auth fails closed: the panel must always ask for a
+  // password, and the server rejects everything when none is configured.
+  safeConfig['admin_password_required'] = 'true';
+  safeConfig['admin_password_configured'] = adminPw !== '' ? 'true' : 'false';
   return ContentService
-    .createTextOutput(JSON.stringify({config: config}))
+    .createTextOutput(JSON.stringify({config: safeConfig}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -563,12 +613,22 @@ function doPost(e) {
     if (data.action === 'myresults')       { return handleMyResults(data); }
     if (data.action === 'checkDuplicate')  { return handleCheckDuplicate(data); }
 
-    // All admin actions require server-side password verification
-    var adminActions = ['submissions', 'details', 'adminQuestions', 'addQuestion', 'updateQuestion', 'deleteQuestion', 'override', 'updateConfig', 'deleteSubmission', 'recalculate', 'regrademc', 'resendEmails', 'mcDistractors', 'uploadImage', 'extractQuestions', 'addQuestionsBulk', 'listImages', 'generateRubrics'];
-    if (adminActions.indexOf(data.action) !== -1) {
-      if (!checkAdminAuth(data.adminPassword || '')) {
+    // Deny by default: anything not on the public list below is an admin action
+    // and requires server-side password verification. (An allowlist of *admin*
+    // actions would silently expose any new handler someone forgets to add.)
+    // Public actions are handled above; the empty action falls through to
+    // handleSubmission, which is the student exam submission path.
+    var publicActions = ['', 'submit'];
+    var requestedAction = String(data.action || '');
+    if (publicActions.indexOf(requestedAction) === -1) {
+      var auth = checkAdminAuthResult(data.adminPassword || '');
+      if (!auth.ok) {
         return ContentService
-          .createTextOutput(JSON.stringify({success: false, error: 'Unauthorized'}))
+          .createTextOutput(JSON.stringify({
+            success: false,
+            error: auth.errorCode === 'admin_password_not_configured' ? auth.error : 'Unauthorized',
+            errorCode: auth.errorCode
+          }))
           .setMimeType(ContentService.MimeType.JSON);
       }
     }
