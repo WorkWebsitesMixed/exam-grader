@@ -660,15 +660,49 @@ function doPost(e) {
 }
 
 // ============================================================
+// RETAKE EXEMPTION  (teacher test accounts)
+// ============================================================
+// Emails listed in the RETAKE_EXEMPT_EMAILS script property (comma-separated)
+// may submit the same exam + set as many times as they like, so a quiz can be
+// run end-to-end before students see it. Edit it in Project Settings > Script
+// Properties; no redeploy needed.
+//
+// Only ever honored for a Google-token-verified identity. An email typed into
+// the request body is not enough, or anyone could claim a teacher's address and
+// submit unlimited rows under their name.
+function isRetakeExempt_(email, emailVerified) {
+  if (!emailVerified) { return false; }
+  var target = String(email || '').toLowerCase().trim();
+  if (!target) { return false; }
+  var raw  = PropertiesService.getScriptProperties().getProperty('RETAKE_EXEMPT_EMAILS') || '';
+  var list = raw.split(',');
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i]).toLowerCase().trim() === target) { return true; }
+  }
+  return false;
+}
+
+// ============================================================
 // HANDLE DUPLICATE CHECK  (called before exam starts)
 // ============================================================
 function handleCheckDuplicate(data) {
   var email = String(data.email || '').toLowerCase().trim();
   var set   = String(data.set   || '');
+  var emailVerified = false;
 
   if (data.idToken) {
     var tokenInfo = verifyGoogleToken(data.idToken);
-    if (tokenInfo && tokenInfo.email) { email = tokenInfo.email.toLowerCase().trim(); }
+    if (tokenInfo && tokenInfo.email) {
+      email = tokenInfo.email.toLowerCase().trim();
+      emailVerified = true;
+    }
+  }
+
+  // Teacher test accounts may always retake
+  if (isRetakeExempt_(email, emailVerified)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({duplicate: false}))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 
   if (!email || !set) {
@@ -724,9 +758,13 @@ function handleSubmission(data) {
   var tabSwitches   = Math.max(0, Math.min(Number(data.tabSwitches)  || 0, 10));
 
   // Override email with server-verified identity when token is present
+  var emailVerified = false;
   if (data.idToken) {
     var tokenInfo = verifyGoogleToken(data.idToken);
-    if (tokenInfo && tokenInfo.email) { email = tokenInfo.email.toLowerCase().trim(); }
+    if (tokenInfo && tokenInfo.email) {
+      email = tokenInfo.email.toLowerCase().trim();
+      emailVerified = true;
+    }
   }
 
   // Read active exam_id from Config
@@ -780,7 +818,8 @@ function handleSubmission(data) {
   }
 
   // Duplicate guard — one submission per email + set + exam
-  if (email) {
+  // (teacher test accounts are exempt, so quizzes can be trialled repeatedly)
+  if (email && !isRetakeExempt_(email, emailVerified)) {
     var ss  = SpreadsheetApp.getActiveSpreadsheet();
     var sub = ss.getSheetByName(SUBMISSIONS_SHEET);
     if (sub && sub.getLastRow() > 1) {
