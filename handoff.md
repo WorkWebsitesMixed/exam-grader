@@ -1,12 +1,14 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-06-20 (session 7 — v2 IGCSE rebuild)_
+_Last updated: 2026-08-09 (session 8 — security hardening + Path A cutover)_
 
 ---
 
 ## 0. v2 STATUS (read this first)
 
-The project is mid-**v2 rebuild** to support **Cambridge IGCSE mock exams**. Everything in §1–§6 that predates v2 is historical (v1, Gemini-based). **All v2 work lives on the `v2-igcse` git branch** against a **dev** Apps Script copy + dev Sheet; `main` holds the preserved v1 snapshot and the **live site is untouched**. Code lives in git via **clasp** (manages `Code.gs` + `appsscript.json` only; the HTML is the GitHub Pages frontend).
+The project is mid-**v2 rebuild** to support **Cambridge IGCSE mock exams**. Everything in §1–§6 that predates v2 is historical (v1, Gemini-based). Code lives in git via **clasp** (manages `Code.gs` + `appsscript.json` only; the HTML is the GitHub Pages frontend).
+
+**⚠️ As of 2026-08-09 the project is executing the "Path A" cutover — see §7. The old rule "never touch the live `/exec` or `main`" is RETIRED.** v2 is being promoted to production, which requires merging `v2-igcse` into `main` and decommissioning the old v1 project.
 
 **Architecture (confirmed):** Apps Script is a **pure JSON API**; the HTML (grader/admin/results/index) is the **GitHub Pages frontend** and finds the backend via a `?src=<exec-url>` query param.
 
@@ -143,7 +145,7 @@ Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site
 
 ### Immediate (v2)
 - [ ] **Phase 5 — multi-teacher template-copy model + registry.** Each teacher runs their own copy bound to their own Google account (data in their Drive, their quota); main admin gates access. Decide ownership of the master template, shared frontend repo, and OAuth client given the possible **sell-to-school**.
-- [ ] **Real go-live** of v2 (point the production frontend at a production v2 backend — promote the dev copy or update the live project) once the preview is signed off.
+- [ ] **Real go-live** of v2 — **decided: Path A, promote the dev copy. See §7 for the runbook and current progress.**
 - [ ] **Remove temporary helpers before handover:** `testClaudeGrading()`, `testImageSetup()` in `Code.gs`; the `http://localhost:8000` dev origin in the OAuth client.
 - [ ] (Future) **Question bank** — tag questions by topic + grade to save/reuse across exams.
 
@@ -220,7 +222,10 @@ Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site
 
 ## 6. Critical Rules
 
-- **(v2) Build on `v2-igcse` against the DEV backend.** Never touch the live `/exec` (`AKfycby0QSD…`) or `main`'s v1 code while building v2.
+- **~~(v2) Build on `v2-igcse` against the DEV backend. Never touch the live `/exec` or `main`.~~ RETIRED 2026-08-09** — that rule protected a *running* v1 while v2 was built alongside it. Path A (§7) decommissions v1, and the cutover requires both forbidden actions (merge into `main`, archive the old deployments). Do not reinstate it.
+- **Admin auth FAILS CLOSED** (`checkAdminAuthResult`, commit `cdd069b`). With no `admin_password` in the Config sheet, every admin action is denied. **Never blank that cell.** Each spreadsheet has its own password — a mismatch while testing looks like a bug but isn't. There is **no login throttling anywhere**, so password *length* is the only real defense on an `ANYONE_ANONYMOUS` endpoint.
+- **`doPost` is deny-by-default.** Public actions are an allowlist (`['', 'submit']`); everything else requires the admin password. Adding a handler to the router does **not** expose it — but do not add anything to `publicActions` without checking it returns no PII.
+- **Config secrets leave through one choke point only** — `publicConfig_()` / `isSecretConfigKey_()`. Any new key containing `password`/`secret`/`api_key`/`token` is stripped automatically. Do not hand-roll a second strip.
 - **(v2) After any `Code.gs` push, run `clasp deploy -i <dev deploymentId>`** or the change won't be live on `/exec` (it serves a frozen version; `clasp push` only updates HEAD). See §Known data state for the id.
 - **(v2) Rubrics & short accepted-answers are NEVER sent to students** — the server reads them from the Questions sheet at grade time.
 - **(v2) IGCSE mode must stay standardized** — backend forces off randomization/sampling and fixes MC option order; do not reintroduce per-student variation for IGCSE exams.
@@ -241,7 +246,41 @@ Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site
 
 ### v2 deployments & accounts (session 7)
 - **Dev backend `/exec`** (build/test here): `https://script.google.com/macros/s/AKfycbyeQbG1xIFVgK6XNeZ1iECYOBll4rv4zrICDPMcj2xGQwhUNvPhkGJN-gAWD4D5M9KeDQ/exec` (deployment id `AKfycbye…`, use with `clasp deploy -i`). A `@HEAD` deployment `AKfycbzoaDdPausIF6rukZXzyDFgFy6yp_2JUp-scuiw9Bpa` always serves the latest push.
-- **LIVE/production backend `/exec`** — separate Apps Script project, **do NOT touch:** `…/macros/s/AKfycby0QSDaQ6TiLvxshHo-lhspmSHK1xCBKrF3xMY1Ev1RCkL6lNx6TYcvGZbDFHQsVwlQ/exec`.
+- **OLD v1 production backend `/exec`** — separate Apps Script project, **being retired under Path A (§7):** `…/macros/s/AKfycby0QSDaQ6TiLvxshHo-lhspmSHK1xCBKrF3xMY1Ev1RCkL6lNx6TYcvGZbDFHQsVwlQ/exec`. An older deployment of the same project is `AKfycbxLSz18SVbUgO0uZTUE…`. Both to be archived.
+- **Script Properties required per project:** `ANTHROPIC_API_KEY` (grading) and `RETAKE_EXEMPT_EMAILS` (comma-separated; listed accounts may retake any exam indefinitely, for trialling quizzes before students see them — honored **only** for a `verifyGoogleToken`-verified identity, and inert while unset). Neither is ever stored in the Config sheet.
+- **`/exec` URLs are not secrets.** Every student's browser has one. The frontend has **no hardcoded backend URL** — all four pages read `?src=` from the query string with no fallback, so "repointing the frontend" is just changing the link you hand out. Rotating the URL buys nothing; security rests entirely on the admin password.
 - **Production frontend (Pages):** `https://workwebsitesmixed.github.io/exam-grader/` (repo `WorkWebsitesMixed/exam-grader`, an org Dyrtull admins). **v2 preview:** `https://workwebsitesmixed.github.io/exam-grader-v2-preview/` (public repo, points at dev backend).
 - **Accounts:** GitHub login `Dyrtull`. OAuth client `878760918876-…` is in the **work/school** Google account; Apps Script, Drive, dev Google-Cloud projects, and GitHub are on the **personal** account — relevant to a future school handover.
 - **Local dev preview:** `python3 -m http.server 8000` in the repo; `http://localhost:8000` is an authorized OAuth origin. Open `localhost:8000/<page>.html?src=<dev /exec>`.
+
+---
+
+## 7. Path A cutover (session 8, 2026-08-09)
+
+**Decision: the dev project BECOMES production.** The v2 Apps Script project (`scriptId 1ul28l8OTQKJ6X1v3L8Lfku5o-Jt1mZKCQASTBaGU93Cr50OUsGEnHwqd`, deployment `AKfycbye…`) takes over; the old v1 project and its spreadsheet are retired.
+
+**Why Path A and not "port v2 into the existing production project":** Andrés confirmed the **old production sheet's data does not matter** — no grade migration needed. That is the only thing that makes A viable; if the historical grades had been needed, porting into the live project (keeping its URL and sheet) was the lower-risk path. Accepted cost: the `/exec` URL changes, so every link already handed out must be reissued.
+
+**Consequence — "retire" is an action, not neglect.** The old spreadsheet holds real student names, emails and grades. Retiring it means deleting it or locking down its sharing, not abandoning it.
+
+### Production links (v2)
+
+Backend: `https://script.google.com/macros/s/AKfycbyeQbG1xIFVgK6XNeZ1iECYOBll4rv4zrICDPMcj2xGQwhUNvPhkGJN-gAWD4D5M9KeDQ/exec`
+
+Append `?src=<that URL>` to any page. `index.html` is a hub that builds the other three links for you.
+
+| | URL |
+|---|---|
+| Hub | `https://workwebsitesmixed.github.io/exam-grader/?src=<exec>` |
+| Student exam | `https://workwebsitesmixed.github.io/exam-grader/grader.html?src=<exec>` |
+| Student results | `https://workwebsitesmixed.github.io/exam-grader/results.html?src=<exec>` |
+| Admin (keep private) | `https://workwebsitesmixed.github.io/exam-grader/admin.html?src=<exec>` |
+
+### Runbook
+
+1. [ ] Script Property in the v2 project: `RETAKE_EXEMPT_EMAILS = andres.forero@marymount.edu.co` *(manual — Apps Script UI)*
+2. [ ] `clasp push` → `clasp deploy -i AKfycbye…` (push alone does not move `/exec`)
+3. [ ] Merge `v2-igcse` → `main`, `git push origin main`. **This is the frontend deploy** — Pages serves `main`, so until this lands the live site runs the v1 HTML against the v2 backend.
+4. [ ] Smoke test *(manual)*: clear `sessionStorage` in open admin tabs first — a password cached from before `cdd069b` is now rejected and looks like a bug. Verify correct password loads submissions; wrong password → "Incorrect password"; student submit end-to-end; `myresults` returns only that student's own row; the exempt account can retake.
+5. [ ] **Irreversible, only after 4 is green:** archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`; delete or lock sharing on the old production spreadsheet (real student PII).
+6. [ ] Retire the `exam-grader-v2-preview` repo/Pages site — once `main` serves v2, it is a duplicate pointing at the same backend.
