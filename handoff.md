@@ -279,8 +279,8 @@ Append `?src=<that URL>` to any page. `index.html` is a hub that builds the othe
 ### Runbook
 
 1. [ ] Script Property in the v2 project: `RETAKE_EXEMPT_EMAILS = andres.forero@marymount.edu.co` *(manual — Apps Script UI)*
-2. [ ] `clasp push` → `clasp deploy -i AKfycbye…` (push alone does not move `/exec`)
-3. [ ] Merge `v2-igcse` → `main`, `git push origin main`. **This is the frontend deploy** — Pages serves `main`, so until this lands the live site runs the v1 HTML against the v2 backend.
-4. [ ] Smoke test *(manual)*: clear `sessionStorage` in open admin tabs first — a password cached from before `cdd069b` is now rejected and looks like a bug. Verify correct password loads submissions; wrong password → "Incorrect password"; student submit end-to-end; `myresults` returns only that student's own row; the exempt account can retake.
+2. [x] **DONE 2026-08-09** — `clasp push` → `clasp deploy -i AKfycbye…` → **`@7`** (push alone does not move `/exec`)
+3. [x] **DONE 2026-08-09** — merged `v2-igcse` → `main` (fast-forward, `f8782b4..9bdfd39`) and pushed. Pages config confirmed `source: {branch: main, path: /}`; build `1141853070` status `built`; live `admin.html` verified **byte-identical** to local v2.
+4. [ ] Smoke test — *automated half done 2026-08-09:* `?action=config` returns **no** `admin_password` (only the `_required`/`_configured` flags, both `true`); POST `getSubmissions` with no password, with a wrong password, and an **unrouted** action all return `{"success":false,"error":"Unauthorized"}` — deny-by-default confirmed on the live deployment. *(Still manual, needs the password / a browser:* clear `sessionStorage` in open admin tabs first — a password cached from before `cdd069b` is now rejected and looks like a bug. Verify the correct password loads submissions; student submit end-to-end; `myresults` returns only that student's own row; the exempt account can retake.*)*
 5. [ ] **Irreversible, only after 4 is green:** archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`; delete or lock sharing on the old production spreadsheet (real student PII).
 6. [ ] Retire the `exam-grader-v2-preview` repo/Pages site — once `main` serves v2, it is a duplicate pointing at the same backend.
