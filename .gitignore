@@ -1,0 +1,4 @@
+# Sample/test exam CSVs are kept local: this repo is PUBLIC and GitHub Pages
+# serves its root, so a committed CSV containing rubrics and accepted answers
+# would be downloadable at https://workwebsitesmixed.github.io/exam-grader/<file>.
+sample_exam_*.csv
