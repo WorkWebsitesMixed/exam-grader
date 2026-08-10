@@ -301,8 +301,11 @@ function getQuestionsResponse() {
     var imageId = String(row[13] !== undefined ? row[13] : '').trim();
 
     if (!set || !id || !text) { continue; }
-    // Empty Exam field = belongs to all exams; non-empty must match active exam_id
-    if (qExam && activeExamId && qExam !== activeExamId) { continue; }
+    // Empty Exam field = belongs to all exams; non-empty must match active exam_id.
+    // Compared case-insensitively: Exam ID and Exam Title are separate settings, and
+    // typing the title's casing into the ID silently emptied the whole paper.
+    if (qExam && activeExamId &&
+        qExam.toLowerCase() !== activeExamId.toLowerCase()) { continue; }
 
     // NOTE: rubric / accepted-answers are intentionally NOT sent to students.
     var q = {id: id, section: section, type: type, points: points, text: text, imageUrl: driveImageUrl_(imageId)};
@@ -733,7 +736,7 @@ function handleCheckDuplicate(data) {
       var rowExam = String(existing[i][COL.EXAM_ID - 1] || '').trim();
       if (String(existing[i][COL.EMAIL - 1]).toLowerCase().trim() === email &&
           String(existing[i][COL.SET   - 1]) === set &&
-          rowExam === activeExamId) {
+          rowExam.toLowerCase() === activeExamId.toLowerCase()) {
         return ContentService
           .createTextOutput(JSON.stringify({duplicate: true}))
           .setMimeType(ContentService.MimeType.JSON);
@@ -828,7 +831,7 @@ function handleSubmission(data) {
         var rowExam = String(existing[di][COL.EXAM_ID - 1] || '').trim();
         if (String(existing[di][COL.EMAIL - 1]).toLowerCase().trim() === email &&
             String(existing[di][COL.SET   - 1]) === set &&
-            rowExam === activeExamId) {
+            rowExam.toLowerCase() === activeExamId.toLowerCase()) {
           return ContentService
             .createTextOutput(JSON.stringify({success: false, duplicate: true}))
             .setMimeType(ContentService.MimeType.JSON);
@@ -1711,7 +1714,7 @@ function handleResendEmails(data) {
     var rowExam  = String(row[COL.EXAM_ID    - 1] || '').trim();
 
     if (!rowEmail) { continue; }
-    if (examId && rowExam !== examId) { continue; }
+    if (examId && rowExam.toLowerCase() !== examId.toLowerCase()) { continue; }
     if (cls    && rowCls  !== cls)    { continue; }
     if (set    && rowSet  !== set)    { continue; }
     if (fromTs || toTs < Infinity) {
