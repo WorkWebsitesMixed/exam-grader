@@ -159,13 +159,42 @@ Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site
 
 #### Multi-exam support (concurrent exams — different grades/topics)
 - Teacher resolved routing independently (session 6).
-- ~~Admin panel still lacks an **Exam filter**~~ **DONE** — the filter exists (`admin.html:675`, applied in `getFiltered()`). Corrected 2026-08-09; the old note would have sent someone rebuilding a feature that already ships. It defaults to *all exams*, so every `exam_id` ever used shows mixed together until you pick one — defaulting it to the active `exam_id` is a possible improvement.
-- **Not yet implemented** (admin filter side).
+- ~~Admin panel still lacks an **Exam filter**~~ **DONE** — it exists (`admin.html:675`, applied in `getFiltered()`) and as of 2026-08-09 defaults to the active `exam_id`. The old note would have sent someone rebuilding a shipped feature.
 
 ### Known pending features / bugs
 - [ ] **MailApp authorization** — email sending silently fails until the teacher manually runs any function calling `MailApp` in the Apps Script editor and approves the permission dialog. One-time step per project.
 - [ ] **Encoding of `checkDuplicate` response** — uses `JSON.stringify`. If names are ever included, switch to `safeJson()`.
 - [ ] **`duplicateScreen` CSS inconsistency** — uses inline `style="display:none"` instead of the `.active` class pattern. Low priority.
+
+### Admin UX roadmap (agreed 2026-08-09)
+
+Ordering principle: **the panel's failures are information-design failures, not visual ones.** Every settings bug so far (blank paper from an `exam_id` mismatch, 10 questions silently sampled down to 7, 83 ghost rows, a new submission buried at the bottom) was the UI staying silent about something the code already knew. Beautification is deferred until the tool stops misleading; revisit that order only if the system is being demoed to the school, where looks are the buying criterion.
+
+Root cause of the settings panel specifically: **it is the Config sheet rendered as a form** — one field per sheet row, in sheet order. It is organised by storage, not by task, which is why it reads as an undifferentiated wall.
+
+#### Tier 1 — prevents known failures — **DONE 2026-08-09**
+- [x] **Live paper preview** at the top of Exam Settings — question count, marks, per-type breakdown, realistic duration, recomputed on every change. Mirrors `Code.gs` filter + sampling maths; verified against the sample paper (10 q / 31 marks, and the 10→7 sampling drop).
+- [x] **Diagnostic empty state** — a paper that would be blank says so, lists the `Exam` tags that *do* exist with counts, and offers one-click fixes.
+- [x] **Save guard** — saving an exam that is ON but would serve a blank paper requires confirmation.
+- [x] **Exam filter defaults to the active exam**; row count states what is hidden.
+- [x] **Table defaults to newest-first**; timestamps sort as instants, blank-timestamp rows sink.
+
+#### Tier 2 — weekly friction
+- [ ] **Replace the 9 native `alert()`/`confirm()` calls** with inline confirmations and a toast stack. Includes the save guard's `confirm()` added in Tier 1 (marked `TODO (Tier 2)` in `admin.html`).
+- [ ] **Responsive layout — there are currently `0` media queries.** A 9-column submissions table is unusable on a tablet; card layout below ~700px.
+- [ ] **Regroup Exam Settings by task, not by sheet order.** Proposed: *This exam* (id/title/subtitle/duration/active) · *Who sits it* (classes, set mode) · *How it's assembled* (IGCSE, sampling) · *What students see* (set cards) · *Security* (password).
+- [ ] **Distinguish Exam ID from Exam Title.** They sit adjacent with identical weight; one is a machine key that must match the Questions sheet, the other is decorative. The ID's help text talks about retakes and never mentions the thing that actually breaks.
+- [ ] **Hide fields that cannot apply.** In `set_mode: single`, seven Set B/C fields are visible and editable but inert; the sampling fields are likewise dead under IGCSE mode.
+- [ ] **`randomize_questions` renders as plain text, not a control** — it reads as broken. Make it a toggle like every other setting, disabled with a reason when IGCSE forces it off.
+- [ ] **Move the admin password out of the middle of the form** into its own section, and add a retype-to-confirm — one typo currently locks you out of your own panel.
+- [ ] **Replace the magic zeros.** `QUESTIONS PER SET (0 = ALL)` and `OPEN-ENDED PER SET (0 = NO GUARANTEE)` encode logic in their labels — two different meanings of `0` in adjacent fields. A "use all questions" checkbox revealing a number input says it without the riddle.
+- [ ] **Fix button hierarchy.** Save is dark navy at the bottom of a long scroll while *Recalculate All Grades* and *Regrade All MC* — which rewrite every row — are bright orange/purple and out-shout it. Sticky save bar that appears when dirty; move the two rewrite operations to a separate Maintenance area.
+
+#### Tier 3 — visual (deferred; do not start before the consolidation below)
+- [ ] **Blocker: 135 inline `style="..."` attributes** bypass the 10 CSS custom properties that already exist. Any theming change means hunting 135 sites and missing some. Consolidation is the unavoidable first step of any redesign.
+- [ ] Type scale, consistent card/elevation treatment, spacing rhythm.
+- [ ] Emoji icons (⚙ 📐 📝) → inline SVG. Emoji render differently per OS and read as unfinished; cheapest credibility win.
+- [ ] Dark mode — genuinely useful for late-night marking.
 
 ### Future — New question types (not yet started)
 - **True/False** — 2-option MC (CorrectIndex 1=True, 2=False), flows through existing MC pipeline.
