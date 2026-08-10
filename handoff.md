@@ -197,7 +197,8 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 - [x] IGCSE toggle is inline with Randomize/Q-per-set/OE-per-set (was forced full-width) — its description now wraps at column width like OE-per-set's, instead of running the full page width.
 - [x] Security is now collapsed by default, click to expand (was always-visible even though rarely touched).
 - [x] Class Options is 9 preset checkboxes (`10A`–`12C`) instead of a free-text CSV field — still writes the same `class_options` config key.
-- [x] **Recalculate All Grades / Regrade All MC are now exam-scoped** via the toolbar Exam filter, and disabled outright when that filter is "All Exams." This is the one item in this batch that touched `Code.gs` (see §5 Key Changes) — **needs `clasp deploy` before it's live.**
+- [x] **Recalculate All Grades / Regrade All MC are now exam-scoped** via the toolbar Exam filter, and disabled outright when that filter is "All Exams." This is the one item in this batch that touched `Code.gs` (see §5 Key Changes) — **deployed 2026-08-10, backend now `@10`.**
+- [x] Class Options + Question Sets now share one row, matching the Exam Active + Exam ID row above them.
 
 **Still open:**
 - [ ] **Replace the 9 native `alert()`/`confirm()` calls** with inline confirmations and a toast stack. Includes the save guard's `confirm()` added in Tier 1 (still marked `TODO (Tier 2)` in `admin.html` — untouched by batch 1).
@@ -248,7 +249,7 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 - `oe_per_set` sampling: splits bank into typed pools, draws exact OE count first
 - `oe_per_set = 0` in `createConfigSheet()` defaults
 - `createConfigSheet()` adds 9 set-card config defaults: `set_a_label`, `set_a_max_grade`, `set_a_description` (and B, C)
-- **(session 9)** `handleBulkRecalc(data)` and `handleRegradeAllMC(data)` now take the request `data` and accept an optional `examId`, skipping Submissions rows whose `EXAM_ID` column doesn't case-insensitively match — same pattern as `handleResendEmails`. `Detailed_Answers` has no exam column of its own, so `handleRegradeAllMC` first builds a `validTs` set of timestamps from Submissions filtered by `examId`, then only regrades Detailed_Answers rows whose timestamp is in that set. **Needs a `clasp deploy`, not yet deployed as of session 9.**
+- **(session 9)** `handleBulkRecalc(data)` and `handleRegradeAllMC(data)` now take the request `data` and accept an optional `examId`, skipping Submissions rows whose `EXAM_ID` column doesn't case-insensitively match — same pattern as `handleResendEmails`. `Detailed_Answers` has no exam column of its own, so `handleRegradeAllMC` first builds a `validTs` set of timestamps from Submissions filtered by `examId`, then only regrades Detailed_Answers rows whose timestamp is in that set. **Deployed 2026-08-10 — backend `@10`.**
 
 **`grader.html`**
 - `startExam()` async: POSTs `checkDuplicate` before showing questions; handles duplicate + network-error states
@@ -347,7 +348,7 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 
 ## 8. NEXT STEPS (start here — as of 2026-08-10, session 9 in progress)
 
-**Status: v2 is live and proven.** Backend at `@9`, frontend on `main` via Pages, full student flow verified end-to-end.
+**Status: v2 is live and proven.** Backend at `@10`, frontend on `main` via Pages, full student flow verified end-to-end.
 
 ### Session 8 blocking items — resolved 2026-08-10
 
@@ -375,8 +376,9 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
    - **IGCSE toggle** is now an inline field like Randomize/Q-per-set/OE-per-set (was forced full-width), so its helper paragraph wraps at column width instead of running edge-to-edge.
    - **Security** is now its own collapsed-by-default sub-section inside Exam Settings (click "Security" to expand) — the password fields aren't the first thing visible.
    - **Class Options** changed from a free-text CSV input to 9 preset checkboxes (`10A`–`12C`), hardcoded in `admin.html` (`.cfgClassCheckbox` elements). Still writes the same `class_options` CSV config key, so `grader.html`'s section dropdown is unaffected. **Deliberately not built to scale to other grades/a future sale** — Andrés floated hardcoding 1st–12th now, hidden until needed; agreed that's speculative given the sell-to-school decision is still open and Phase 5's per-teacher-copy model may want per-teacher class lists anyway. Revisit only once that decision is made.
-   - **Recalculate All Grades / Regrade All MC are now exam-scoped, not global.** This required a `Code.gs` change (not just `admin.html`): `handleBulkRecalc` and `handleRegradeAllMC` (Code.gs) now take the POST body's `data` and accept an optional `examId`, filtering by the Submissions sheet's `EXAM_ID` column exactly like `handleResendEmails` already did (case-insensitive match). The two buttons read the existing toolbar **Exam filter** (no new dropdown) and send its value as `examId`; **both buttons are disabled outright when the filter is on "All Exams"** — Andrés confirmed he wants a specific exam required, not just a warning, since a mis-scoped bulk rewrite across every exam at once is the exact failure mode being avoided. ⚠️ **This DOES need `clasp push` + `clasp deploy -i <deploymentId>`** before it's live — unlike batch 1, this batch touches `Code.gs`.
-   - Verified: JS + Apps Script syntax both check clean via `node --check`. **Not yet deployed to Apps Script and not browser-tested** — needs `clasp push`/`clasp deploy` and a real click-through (toggle the Exam filter, confirm buttons enable/disable, run Recalculate against the `GK_TEST` exam and confirm it doesn't touch other exams' rows) before trusting it with real data.
+   - **Recalculate All Grades / Regrade All MC are now exam-scoped, not global.** This required a `Code.gs` change (not just `admin.html`): `handleBulkRecalc` and `handleRegradeAllMC` (Code.gs) now take the POST body's `data` and accept an optional `examId`, filtering by the Submissions sheet's `EXAM_ID` column exactly like `handleResendEmails` already did (case-insensitive match). The two buttons read the existing toolbar **Exam filter** (no new dropdown) and send its value as `examId`; **both buttons are disabled outright when the filter is on "All Exams"** — Andrés confirmed he wants a specific exam required, not just a warning, since a mis-scoped bulk rewrite across every exam at once is the exact failure mode being avoided.
+   - Follow-up polish (batch 2, same session): Class Options → 9 checkboxes, Exam Active + Exam ID + Question Sets/Class Options paired onto shared rows, IGCSE toggle made inline, Security collapsed by default. See the full batch-2 bullet list in the Admin UX roadmap section below.
+   - **DEPLOYED 2026-08-10.** Committed (`36ac15a`), pushed to `main` (Pages picks up `admin.html`/`handoff.md` automatically), and `Code.gs` pushed + deployed via `clasp deploy -i AKfycbye…` → backend now **`@10`**. Verified: JS + Apps Script syntax both check clean via `node --check`. **Still not browser-tested** — no browser automation was available this session. Before trusting it with real data: toggle the Exam filter and confirm the Maintenance buttons enable/disable, run Recalculate against the `GK_TEST` exam and confirm other exams' rows are untouched, click through the regrouped Exam Settings sections.
 
 ### Then, to finish the cutover
 
