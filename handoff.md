@@ -1,6 +1,8 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-08-09 (session 8 — security hardening + Path A cutover)_
+_Last updated: 2026-08-09 (session 8 — security hardening, Path A cutover, admin UX Tier 1)_
+
+**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-09-end-of-session-8).**
 
 ---
 
@@ -179,6 +181,8 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 - [x] **Exam filter defaults to the active exam**; row count states what is hidden.
 - [x] **Table defaults to newest-first**; timestamps sort as instants, blank-timestamp rows sink.
 
+**Gotcha found while building this (`fd31ef9`):** the question bank is fetched **lazily** — `loadQuestions()` originally ran only when the Questions panel was first expanded. `allQuestions.length === 0` therefore meant *either* "not fetched yet" *or* "genuinely empty", and the preview reported "No questions exist yet" on every fresh page load. Now tracked explicitly via `questionsLoaded` / `questionsLoading` / `questionsFailed`, and the preview fetches what it needs rather than reporting on absent data. The `failed` flag exists because the `catch` handler calls `updatePaperPreview()`, which would otherwise re-fire the failing request in a loop. **If you add anything else that reads `allQuestions`, check `questionsLoaded` first.**
+
 #### Tier 2 — weekly friction
 - [ ] **Replace the 9 native `alert()`/`confirm()` calls** with inline confirmations and a toast stack. Includes the save guard's `confirm()` added in Tier 1 (marked `TODO (Tier 2)` in `admin.html`).
 - [ ] **Responsive layout — there are currently `0` media queries.** A 9-column submissions table is unusable on a tablet; card layout below ~700px.
@@ -307,10 +311,16 @@ Append `?src=<that URL>` to any page. `index.html` is a hub that builds the othe
 
 ### Runbook
 
-1. [ ] Script Property in the v2 project: `RETAKE_EXEMPT_EMAILS = andres.forero@marymount.edu.co` *(manual — Apps Script UI)*
+1. [x] **DONE 2026-08-09** — Script Property in the v2 project: `RETAKE_EXEMPT_EMAILS = andres.forero@marymount.edu.co`. Confirmed working: the same account submitted `GK_test` twice.
 2. [x] **DONE 2026-08-09** — `clasp push` → `clasp deploy -i AKfycbye…` → **`@7`** (push alone does not move `/exec`)
 3. [x] **DONE 2026-08-09** — merged `v2-igcse` → `main` (fast-forward, `f8782b4..9bdfd39`) and pushed. Pages config confirmed `source: {branch: main, path: /}`; build `1141853070` status `built`; live `admin.html` verified **byte-identical** to local v2.
-4. [ ] Smoke test — *automated half done 2026-08-09:* `?action=config` returns **no** `admin_password` (only the `_required`/`_configured` flags, both `true`); POST `getSubmissions` with no password, with a wrong password, and an **unrouted** action all return `{"success":false,"error":"Unauthorized"}` — deny-by-default confirmed on the live deployment. *(Still manual, needs the password / a browser:* clear `sessionStorage` in open admin tabs first — a password cached from before `cdd069b` is now rejected and looks like a bug. Verify the correct password loads submissions; student submit end-to-end; `myresults` returns only that student's own row; the exempt account can retake.*)*
+4. [x] **DONE 2026-08-09 — smoke test green.** Verified end-to-end with `sample_exam_general_knowledge.csv`:
+   - **Auth (automated):** `?action=config` returns **no** `admin_password` (only the `_required`/`_configured` flags, both `true`); POST `getSubmissions` with no password, a wrong password, and an **unrouted action** all return `{"success":false,"error":"Unauthorized"}` — deny-by-default confirmed live.
+   - **Student flow:** full submission graded — 12/31 = 39%, grade 2. MC graded server-side, `short` matched exactly, all five `openEnded` marked against their rubrics with paragraph feedback. Claude correctly rejected the vague seasons answer and caught a CO₂/ozone-layer confusion, i.e. it is genuinely reading the rubric.
+   - **`Detailed_Answers`** auto-created with correct headers and one row per question.
+   - **Retake exemption** works (two submissions, same account, same exam).
+   - **Admin panel** loads submissions with the correct password.
+   - **Not yet verified:** results **email delivery** (see MailApp note in *Known pending features*), and that `myresults` returns only the requesting student's own row.
 5. [ ] **Irreversible, only after 4 is green — MANUAL, Andrés's personal account:** archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`; delete or lock sharing on the old production spreadsheet (real student PII). Cannot be automated from this repo: the old v1 Apps Script project's `scriptId` is unknown (it was never clasp-managed), and the old spreadsheet lives in `anfforerobe@gmail.com`, which is not the account any local tooling is connected to. **Ordering note:** the v1 system is the only rollback path if step 4 fails, so do not destroy it first.
 6. [x] **DONE 2026-08-09** — `exam-grader-v2-preview` retired: Pages site deleted (now 404) and repo **archived** (reversible; not deleted). Production Pages unaffected (200).
 
@@ -318,4 +328,31 @@ Append `?src=<that URL>` to any page. `index.html` is a hub that builds the othe
 
 `sample_exam_general_knowledge.csv` (repo root, **git-ignored on purpose** — see `.gitignore`; this repo is public and Pages serves its root, so a committed mark scheme would be world-downloadable). 10 general-knowledge questions, 31 marks: 2 `mc`, 3 `short`, 5 `openEnded`, all `Set A`, `Exam = GK_TEST`.
 
-To use it: paste the rows under the existing `Questions` header, set Config `exam_id = GK_TEST` (isolates it — a non-empty `Exam` cell only loads when it matches the active `exam_id`), raise `exam_duration_minutes` from 15, test, then set `exam_id` back to `0445_Paper4`. The Paper 4 rows stay untouched throughout.
+To use it: paste the rows under the existing `Questions` header, set Config `exam_id = GK_TEST` (isolates it — a non-empty `Exam` cell only loads when it matches the active `exam_id`; **matched case-insensitively since `965890d`**), raise `exam_duration_minutes` from 15, test, then set `exam_id` back to `0445_Paper4`. The Paper 4 rows stay untouched throughout.
+
+---
+
+## 8. NEXT STEPS (start here — as of 2026-08-09, end of session 8)
+
+**Status: v2 is live and proven.** Backend at `@9`, frontend on `main` via Pages, full student flow verified end-to-end. Nothing is blocking normal use — you can build a real paper today.
+
+### Blocking, before real students use it
+
+1. [ ] **Clear the Submissions sheet.** Rows 2–87 are dev-test ghosts: no timestamp, name, email or score, only an exam tag. Delete rows 2 → last in **`Submissions`**, and everything below row 1 in **`Detailed_Answers`**. Keep the header rows. *Not cosmetic* — 83 zero rows drag every class average and grade distribution in any aggregate that ignores the exam filter. Andrés confirmed no submission data needs keeping.
+2. [ ] **Verify results emails actually send.** The one untested link in the chain. MailApp authorisation is **per project**, so v1's grant did not carry over; scopes are inferred statically from the whole file, so approving any function in the editor covers mail — running `setup()` during pre-flight most likely already did it. Confirm by watching for the email on the next submission. Quota is **100/day** (personal Gmail), not 1500.
+3. [ ] **Rotate the admin password.** It was read in plaintext from the Config sheet during session 8 and is in that session's transcript. Stored unhashed by design, so anyone with read access to the workbook has admin access to the exam system — relevant before sharing the sheet with anyone.
+
+### Then, to finish the cutover
+
+4. [ ] **Retire v1** — §7 runbook step 5. Irreversible, manual, and only from Andrés's personal account: archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`, then delete or lock sharing on the old production spreadsheet (**real student PII**). Now unblocked: step 4's smoke test is green, so the v1 rollback path is no longer needed.
+5. [ ] **Rename the workbook** — "Exam Grader v2 (DEV)" is production. The name will mislead someone (probably future-Andrés).
+
+### Then, product work
+
+6. [ ] **Admin UX Tier 2** — see *Admin UX roadmap*. Highest value first: regroup Exam Settings by task, separate Exam ID from Exam Title, hide inert fields, fix the button hierarchy. Tier 3 (visual) stays deferred; revisit only if demoing to the school, where looks become the buying criterion.
+7. [ ] **Build a real IGCSE paper** — this is what the system exists for. Turn IGCSE mode back on, use the marking-scheme PDF uploader (`generateRubrics`), which is the one major feature the GK smoke test did **not** exercise.
+8. [ ] **Phase 5** — multi-teacher template-copy model + registry.
+
+### Decisions still open
+- **Sell to the school or not.** Unresolved, and it changes priorities: it moves Tier 3 visual work up, and makes ownership of the master template, frontend repo and OAuth client urgent (see *Accounts* — the OAuth client is on the work account, everything else on the personal one).
+- **Email sender account** — stays personal for now; see §Email sender for why moving to Workspace is risky.
