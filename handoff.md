@@ -1,8 +1,8 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-08-10 (session 9 — cutover cleanup, admin UX Tier 2 batch 1)_
+_Last updated: 2026-08-10 (end of session 9 — cutover cleanup, admin UX Tier 2 batches 1-2, deployed)_
 
-**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-10-session-9-in-progress).**
+**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-10-end-of-session-9).**
 
 ---
 
@@ -346,9 +346,11 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 
 ---
 
-## 8. NEXT STEPS (start here — as of 2026-08-10, session 9 in progress)
+## 8. NEXT STEPS (start here — as of 2026-08-10, end of session 9)
 
 **Status: v2 is live and proven.** Backend at `@10`, frontend on `main` via Pages, full student flow verified end-to-end.
+
+**Housekeeping:** the local repo folder moved from `.../Marymount/D&T Classes/exam-grader` to `.../Marymount/exam-grader` (now a sibling of `D&T Classes`, `Curriculum`, etc., rather than nested under D&T Classes) — no effect on git remote, GitHub Pages, or the Apps Script deployment, all of which are keyed off the repo/project itself, not the local path.
 
 ### Session 8 blocking items — resolved 2026-08-10
 
