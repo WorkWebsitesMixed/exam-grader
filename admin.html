@@ -892,8 +892,11 @@
     var allSubmissions = [];
     var currentConfig  = {};
     var currentModalSub = null;
-    var sortKey = 'lastName';
-    var sortAsc = true;
+    // Newest first: after running an exam you are looking for what just came in,
+    // not for surnames beginning with A.
+    var sortKey = 'timestamp';
+    var sortAsc = false;
+    var examFilterInitialised = false;
 
     if (!appsScriptUrl) {
         document.getElementById('loadingScreen').style.display = 'none';
@@ -1731,6 +1734,19 @@
         var newPw = document.getElementById('cfgPassword').value;
         if (newPw) { updates['admin_password'] = newPw; }
 
+        // Last line of defence before a broken exam reaches students. The preview
+        // above already says this, but a teacher mid-setup can scroll straight past
+        // it — so make going live with a blank paper a deliberate act.
+        // TODO (Tier 2): replace with an inline confirmation, not a native dialog.
+        updatePaperPreview();
+        if (lastPaperState && lastPaperState.worst === 'err' && lastPaperState.active) {
+            if (!confirm(
+                'This exam is switched ON but would show students a blank paper.\n\n' +
+                'No questions match Exam ID "' + (lastPaperState.examId || '(empty)') + '".\n\n' +
+                'Save anyway?'
+            )) { return; }
+        }
+
         btn.disabled = true;
         btn.textContent = 'Saving...';
         status.className = 'save-status';
@@ -1780,6 +1796,7 @@
         if (currentConfig.exam_id) { exams[currentConfig.exam_id] = true; }
 
         var examSel = document.getElementById('examFilter');
+        var keepExam = examSel.value;
         examSel.innerHTML = '<option value="">All Exams</option>';
         Object.keys(exams).sort().forEach(function(e) {
             var opt = document.createElement('option');
@@ -1788,6 +1805,17 @@
             if (e === currentConfig.exam_id) { opt.textContent += ' (active)'; }
             examSel.appendChild(opt);
         });
+        // Default to the exam being run, not "all" — a sheet that has accumulated
+        // several exams otherwise opens on a pile of unrelated rows. Only on first
+        // build; a choice the user has made since is preserved across reloads.
+        if (!examFilterInitialised) {
+            examFilterInitialised = true;
+            if (currentConfig.exam_id && exams[currentConfig.exam_id]) {
+                examSel.value = currentConfig.exam_id;
+            }
+        } else if (keepExam) {
+            examSel.value = keepExam;
+        }
 
         var sel = document.getElementById('classFilter');
         sel.innerHTML = '<option value="">All Classes</option>';
@@ -1947,6 +1975,8 @@
     }
 
 
+    var lastPaperState = null;
+
     // ===== Paper preview =====================================================
     // Mirrors the backend's filter (Code.gs question load) and sampling maths so
     // the numbers here are the numbers students get. If the two ever diverge, this
@@ -2079,6 +2109,11 @@
             grandTotal === 0 ? '' : lines.join('   ·   ') + '   ·   ~' + estimate + ' min needed';
         document.getElementById('ppIssues').innerHTML = issues.join('');
         box.className = 'paper-preview' + (worst === 'err' ? ' is-error' : worst === 'warn' ? ' is-warn' : '');
+
+        lastPaperState = {
+            total: grandTotal, marks: grandMarks, worst: worst,
+            active: active, duration: duration, estimate: estimate, examId: examId
+        };
     }
 
     function ppUseExamId(tag) {
@@ -2137,6 +2172,11 @@
             if (sortKey === 'percentage' || sortKey === 'finalGrade') {
                 av = parseFloat(av) || 0;
                 bv = parseFloat(bv) || 0;
+            } else if (sortKey === 'timestamp') {
+                // Compare as instants, not text: ISO strings happen to sort correctly
+                // as strings, but anything else written to that column would not.
+                av = Date.parse(av) || 0;
+                bv = Date.parse(bv) || 0;
             } else {
                 av = String(av).toLowerCase();
                 bv = String(bv).toLowerCase();
@@ -2187,7 +2227,12 @@
             tbody.appendChild(tr);
         });
 
-        document.getElementById('rowCount').textContent = rows.length + ' student' + (rows.length !== 1 ? 's' : '') + ' shown';
+        // Always say what is being hidden. A filtered view that looks like the whole
+        // truth is how 83 empty rows sat unnoticed in the sheet for weeks.
+        var hidden = allSubmissions.length - rows.length;
+        document.getElementById('rowCount').textContent =
+            rows.length + ' student' + (rows.length !== 1 ? 's' : '') + ' shown' +
+            (hidden > 0 ? '  ·  ' + hidden + ' hidden by the filters above' : '');
     }
 
     function openModal(s) {
