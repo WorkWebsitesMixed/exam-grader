@@ -1,8 +1,8 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-08-09 (session 8 — security hardening, Path A cutover, admin UX Tier 1)_
+_Last updated: 2026-08-10 (session 9 — cutover cleanup, admin UX Tier 2 batch 1)_
 
-**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-09-end-of-session-8).**
+**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-10-session-9-in-progress).**
 
 ---
 
@@ -184,15 +184,26 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 **Gotcha found while building this (`fd31ef9`):** the question bank is fetched **lazily** — `loadQuestions()` originally ran only when the Questions panel was first expanded. `allQuestions.length === 0` therefore meant *either* "not fetched yet" *or* "genuinely empty", and the preview reported "No questions exist yet" on every fresh page load. Now tracked explicitly via `questionsLoaded` / `questionsLoading` / `questionsFailed`, and the preview fetches what it needs rather than reporting on absent data. The `failed` flag exists because the `catch` handler calls `updatePaperPreview()`, which would otherwise re-fire the failing request in a loop. **If you add anything else that reads `allQuestions`, check `questionsLoaded` first.**
 
 #### Tier 2 — weekly friction
-- [ ] **Replace the 9 native `alert()`/`confirm()` calls** with inline confirmations and a toast stack. Includes the save guard's `confirm()` added in Tier 1 (marked `TODO (Tier 2)` in `admin.html`).
+
+**Batch 1 — DONE 2026-08-10 (implemented, not yet browser-verified — see §8 item 6):**
+- [x] **Regroup Exam Settings by task, not by sheet order.** Implemented as: *This Exam* (active/id/title/subtitle/duration) · *Who Sits It* (classes, set mode) · *How It's Assembled* (IGCSE, sampling) · *What Students See* (set cards) · *Security* (password).
+- [x] **Distinguish Exam ID from Exam Title.** Exam ID now lives in its own bordered callout with copy stating it must match the Questions sheet's `Exam` column; Title stays plain/decorative.
+- [x] **Hide fields that cannot apply.** Set B/C card-label fields (`#setBCFields`) are hidden (not just dimmed) when Question Sets is Single, toggled live via `applySetModeUI()`. IGCSE-dead sampling fields keep the existing dim+disable but now also show an inline reason.
+- [x] **Fix button hierarchy.** Recalculate All Grades / Regrade All MC moved to a separate collapsible **Maintenance** block below Exam Settings. Save Settings is now a sticky bottom bar (`#stickySaveBar`) that only appears once `configDirty` is set — no longer a static button buried at the end of a long scroll.
+- [x] **Move the admin password out of the middle of the form**, into its own Security section, with a retype-to-confirm field (client-side only, blocks save on mismatch).
+
+**Batch 2 — DONE 2026-08-10, same session (follow-up polish after seeing batch 1 rendered — see §8 item 7):**
+- [x] Exam Active + Exam ID now share one row instead of stacking.
+- [x] IGCSE toggle is inline with Randomize/Q-per-set/OE-per-set (was forced full-width) — its description now wraps at column width like OE-per-set's, instead of running the full page width.
+- [x] Security is now collapsed by default, click to expand (was always-visible even though rarely touched).
+- [x] Class Options is 9 preset checkboxes (`10A`–`12C`) instead of a free-text CSV field — still writes the same `class_options` config key.
+- [x] **Recalculate All Grades / Regrade All MC are now exam-scoped** via the toolbar Exam filter, and disabled outright when that filter is "All Exams." This is the one item in this batch that touched `Code.gs` (see §5 Key Changes) — **needs `clasp deploy` before it's live.**
+
+**Still open:**
+- [ ] **Replace the 9 native `alert()`/`confirm()` calls** with inline confirmations and a toast stack. Includes the save guard's `confirm()` added in Tier 1 (still marked `TODO (Tier 2)` in `admin.html` — untouched by batch 1).
 - [ ] **Responsive layout — there are currently `0` media queries.** A 9-column submissions table is unusable on a tablet; card layout below ~700px.
-- [ ] **Regroup Exam Settings by task, not by sheet order.** Proposed: *This exam* (id/title/subtitle/duration/active) · *Who sits it* (classes, set mode) · *How it's assembled* (IGCSE, sampling) · *What students see* (set cards) · *Security* (password).
-- [ ] **Distinguish Exam ID from Exam Title.** They sit adjacent with identical weight; one is a machine key that must match the Questions sheet, the other is decorative. The ID's help text talks about retakes and never mentions the thing that actually breaks.
-- [ ] **Hide fields that cannot apply.** In `set_mode: single`, seven Set B/C fields are visible and editable but inert; the sampling fields are likewise dead under IGCSE mode.
-- [ ] **`randomize_questions` renders as plain text, not a control** — it reads as broken. Make it a toggle like every other setting, disabled with a reason when IGCSE forces it off.
-- [ ] **Move the admin password out of the middle of the form** into its own section, and add a retype-to-confirm — one typo currently locks you out of your own panel.
+- [ ] **`randomize_questions` toggle disabled-with-reason** — batch 1 added the reason text for the IGCSE-forced-off case; re-check whether the control itself still ever "reads as broken" outside that case before closing this out.
 - [ ] **Replace the magic zeros.** `QUESTIONS PER SET (0 = ALL)` and `OPEN-ENDED PER SET (0 = NO GUARANTEE)` encode logic in their labels — two different meanings of `0` in adjacent fields. A "use all questions" checkbox revealing a number input says it without the riddle.
-- [ ] **Fix button hierarchy.** Save is dark navy at the bottom of a long scroll while *Recalculate All Grades* and *Regrade All MC* — which rewrite every row — are bright orange/purple and out-shout it. Sticky save bar that appears when dirty; move the two rewrite operations to a separate Maintenance area.
 
 #### Tier 3 — visual (deferred; do not start before the consolidation below)
 - [ ] **Blocker: 135 inline `style="..."` attributes** bypass the 10 CSS custom properties that already exist. Any theming change means hunting 135 sites and missing some. Consolidation is the unavoidable first step of any redesign.
@@ -237,6 +248,7 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 - `oe_per_set` sampling: splits bank into typed pools, draws exact OE count first
 - `oe_per_set = 0` in `createConfigSheet()` defaults
 - `createConfigSheet()` adds 9 set-card config defaults: `set_a_label`, `set_a_max_grade`, `set_a_description` (and B, C)
+- **(session 9)** `handleBulkRecalc(data)` and `handleRegradeAllMC(data)` now take the request `data` and accept an optional `examId`, skipping Submissions rows whose `EXAM_ID` column doesn't case-insensitively match — same pattern as `handleResendEmails`. `Detailed_Answers` has no exam column of its own, so `handleRegradeAllMC` first builds a `validTs` set of timestamps from Submissions filtered by `examId`, then only regrades Detailed_Answers rows whose timestamp is in that set. **Needs a `clasp deploy`, not yet deployed as of session 9.**
 
 **`grader.html`**
 - `startExam()` async: POSTs `checkDuplicate` before showing questions; handles duplicate + network-error states
@@ -250,6 +262,7 @@ Root cause of the settings panel specifically: **it is the Config sheet rendered
 - MC Distractor Analysis collapsible panel (set tabs, lazy load, horizontal bars)
 - Grade Distribution chart: sorted numeric x-axis, grouped bars by set
 - "Set Card Labels" subsection in ⚙ Exam Settings: 9 inputs (label, max grade, description per set A/B/C), wired to `applyConfig()` and `saveConfig()`
+- **(session 9, Tier 2 batches 1+2)** Exam Settings regrouped into five sections; Exam ID split visually from Exam Title; Exam Active + Exam ID share a row; Set B/C card-label fields hidden under single-set mode; IGCSE-disabled sampling fields show an inline reason; IGCSE toggle is now inline like its siblings; Security is its own closed-by-default sub-section; Class Options is 9 hardcoded checkboxes (`10A`–`12C`) instead of free-text CSV; Recalculate/Regrade moved to a new Maintenance block, scoped to the toolbar Exam filter, disabled when that filter is "All Exams"; Save Settings is a sticky bar gated on a `configDirty` flag; added a password retype-confirm field.
 
 ---
 
@@ -332,26 +345,47 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 
 ---
 
-## 8. NEXT STEPS (start here — as of 2026-08-09, end of session 8)
+## 8. NEXT STEPS (start here — as of 2026-08-10, session 9 in progress)
 
-**Status: v2 is live and proven.** Backend at `@9`, frontend on `main` via Pages, full student flow verified end-to-end. Nothing is blocking normal use — you can build a real paper today.
+**Status: v2 is live and proven.** Backend at `@9`, frontend on `main` via Pages, full student flow verified end-to-end.
 
-### Blocking, before real students use it
+### Session 8 blocking items — resolved 2026-08-10
 
-1. [ ] **Clear the Submissions sheet.** Rows 2–87 are dev-test ghosts: no timestamp, name, email or score, only an exam tag. Delete rows 2 → last in **`Submissions`**, and everything below row 1 in **`Detailed_Answers`**. Keep the header rows. *Not cosmetic* — 83 zero rows drag every class average and grade distribution in any aggregate that ignores the exam filter. Andrés confirmed no submission data needs keeping.
-2. [ ] **Verify results emails actually send.** The one untested link in the chain. MailApp authorisation is **per project**, so v1's grant did not carry over; scopes are inferred statically from the whole file, so approving any function in the editor covers mail — running `setup()` during pre-flight most likely already did it. Confirm by watching for the email on the next submission. Quota is **100/day** (personal Gmail), not 1500.
-3. [ ] **Rotate the admin password.** It was read in plaintext from the Config sheet during session 8 and is in that session's transcript. Stored unhashed by design, so anyone with read access to the workbook has admin access to the exam system — relevant before sharing the sheet with anyone.
+1. [x] **Submissions sheet cleared** — dev-test ghost rows removed (Andrés, manual).
+2. [x] **Results emails confirmed working** — Andrés received the email for the last test exam.
+3. [ ] **Rotate the admin password** — still open. Note: hashing the stored password is a `Code.gs` **code change**, not something to do in the sheet — `getAdminPassword()` (Code.gs:136) and `checkAdminAuthResult()` (Code.gs:184) would need to hash with `Utilities.computeDigest` before comparing, and the save path (Code.gs:~1259) would hash before writing. Not yet implemented; for now, "rotate" means just typing a new plaintext value into the admin panel's password field.
+4. [ ] **Lock the old v1 spreadsheet** — this is a Google Sheets **sharing-settings** action (Share → Manage access → remove all non-owner collaborators / restrict general access), not a code change. Still blocked on Andrés doing it manually from the `anfforerobe@gmail.com` account (§7 runbook step 5) — no local tooling has access there.
+5. [x] **Workbook renamed** to "Exam Grader Production".
+
+### In progress — Admin UX Tier 2 (batch 1, session 9)
+
+6. [ ] **Tier 2 batch 1 implemented, not yet verified in a live browser.** Per the roadmap's own priority order, did in one pass:
+   - Regrouped Exam Settings into five task-based sections: *This Exam*, *Who Sits It*, *How It's Assembled*, *What Students See*, *Security*.
+   - Exam ID pulled into its own callout, visually distinct from the decorative Exam Title, with explicit copy that it must match the Questions sheet's `Exam` column.
+   - Set B/C card-label fields now hidden (not just left inert) when Question Sets is Single; IGCSE-disabled sampling fields now show an inline reason instead of just dimming.
+   - Recalculate All Grades / Regrade All MC moved out of Exam Settings into a new separate collapsible **Maintenance** block.
+   - Save Settings is now a sticky bottom bar that only appears once a field is actually dirty (`configDirty` flag, mirrors the existing `ppBound` pattern), instead of sitting fixed at the bottom of a long scroll.
+   - Added a password retype-to-confirm field (client-side only; blocks save on mismatch, never sent to the server).
+   - All changes are in `admin.html` only — no `Code.gs` touched, so no `clasp deploy` needed, just the normal `git push` to `main` for Pages to pick it up.
+   - **Verified:** JS syntax check passes, no duplicate element IDs, markup renders (confirmed via local `http.server` + curl). **Not verified:** actual click-through in a browser — no browser automation was available this session. Test before trusting: open `admin.html?src=<prod exec>` locally, toggle Question Sets and IGCSE, edit a field and confirm the sticky bar appears/disappears correctly, try a mismatched password confirm.
+   - **Deferred to a later Tier 2 batch** (independent of this restructuring): replace the 9 native `alert()`/`confirm()` calls with inline confirmations/toasts (including the blank-paper save guard, still a native `confirm()`), responsive layout (0 media queries), the magic-zero input redesign.
+
+7. [ ] **Tier 2 batch 2 implemented (same session), on top of batch 1 — also not yet browser-verified.** Follow-up requests after seeing batch 1's screenshots:
+   - **Exam Active + Exam ID** now sit in one row (toggle beside the ID callout) instead of stacked.
+   - **IGCSE toggle** is now an inline field like Randomize/Q-per-set/OE-per-set (was forced full-width), so its helper paragraph wraps at column width instead of running edge-to-edge.
+   - **Security** is now its own collapsed-by-default sub-section inside Exam Settings (click "Security" to expand) — the password fields aren't the first thing visible.
+   - **Class Options** changed from a free-text CSV input to 9 preset checkboxes (`10A`–`12C`), hardcoded in `admin.html` (`.cfgClassCheckbox` elements). Still writes the same `class_options` CSV config key, so `grader.html`'s section dropdown is unaffected. **Deliberately not built to scale to other grades/a future sale** — Andrés floated hardcoding 1st–12th now, hidden until needed; agreed that's speculative given the sell-to-school decision is still open and Phase 5's per-teacher-copy model may want per-teacher class lists anyway. Revisit only once that decision is made.
+   - **Recalculate All Grades / Regrade All MC are now exam-scoped, not global.** This required a `Code.gs` change (not just `admin.html`): `handleBulkRecalc` and `handleRegradeAllMC` (Code.gs) now take the POST body's `data` and accept an optional `examId`, filtering by the Submissions sheet's `EXAM_ID` column exactly like `handleResendEmails` already did (case-insensitive match). The two buttons read the existing toolbar **Exam filter** (no new dropdown) and send its value as `examId`; **both buttons are disabled outright when the filter is on "All Exams"** — Andrés confirmed he wants a specific exam required, not just a warning, since a mis-scoped bulk rewrite across every exam at once is the exact failure mode being avoided. ⚠️ **This DOES need `clasp push` + `clasp deploy -i <deploymentId>`** before it's live — unlike batch 1, this batch touches `Code.gs`.
+   - Verified: JS + Apps Script syntax both check clean via `node --check`. **Not yet deployed to Apps Script and not browser-tested** — needs `clasp push`/`clasp deploy` and a real click-through (toggle the Exam filter, confirm buttons enable/disable, run Recalculate against the `GK_TEST` exam and confirm it doesn't touch other exams' rows) before trusting it with real data.
 
 ### Then, to finish the cutover
 
-4. [ ] **Retire v1** — §7 runbook step 5. Irreversible, manual, and only from Andrés's personal account: archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`, then delete or lock sharing on the old production spreadsheet (**real student PII**). Now unblocked: step 4's smoke test is green, so the v1 rollback path is no longer needed.
-5. [ ] **Rename the workbook** — "Exam Grader v2 (DEV)" is production. The name will mislead someone (probably future-Andrés).
+8. [ ] **Retire v1** — §7 runbook step 5 (same manual action as item 4 above, plus archiving the two old deployments). Unblocked since the smoke test is green.
 
 ### Then, product work
 
-6. [ ] **Admin UX Tier 2** — see *Admin UX roadmap*. Highest value first: regroup Exam Settings by task, separate Exam ID from Exam Title, hide inert fields, fix the button hierarchy. Tier 3 (visual) stays deferred; revisit only if demoing to the school, where looks become the buying criterion.
-7. [ ] **Build a real IGCSE paper** — this is what the system exists for. Turn IGCSE mode back on, use the marking-scheme PDF uploader (`generateRubrics`), which is the one major feature the GK smoke test did **not** exercise.
-8. [ ] **Phase 5** — multi-teacher template-copy model + registry.
+9. [ ] **Build a real IGCSE paper** — this is what the system exists for. Turn IGCSE mode back on, use the marking-scheme PDF uploader (`generateRubrics`). Andrés has tried this before; re-verify it end-to-end, it's the one major feature the GK smoke test did **not** exercise.
+10. [ ] **Phase 5** — multi-teacher template-copy model + registry.
 
 ### Decisions still open
 - **Sell to the school or not.** Unresolved, and it changes priorities: it moves Tier 3 visual work up, and makes ownership of the master template, frontend repo and OAuth client urgent (see *Accounts* — the OAuth client is on the work account, everything else on the personal one).

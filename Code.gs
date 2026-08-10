@@ -645,8 +645,8 @@ function doPost(e) {
     if (data.action === 'override')         { return handleOverride(data); }
     if (data.action === 'updateConfig')     { return handleUpdateConfig(data); }
     if (data.action === 'deleteSubmission') { return handleDelete(data); }
-    if (data.action === 'recalculate')      { return handleBulkRecalc(); }
-    if (data.action === 'regrademc')        { return handleRegradeAllMC(); }
+    if (data.action === 'recalculate')      { return handleBulkRecalc(data); }
+    if (data.action === 'regrademc')        { return handleRegradeAllMC(data); }
     if (data.action === 'resendEmails')     { return handleResendEmails(data); }
     if (data.action === 'mcDistractors')    { return handleMcDistractors(); }
     if (data.action === 'uploadImage')      { return handleUploadImage(data); }
@@ -1621,7 +1621,9 @@ function recalculateWithOverrides() {
 // ============================================================
 // HANDLE BULK RECALCULATE  (from admin.html)
 // ============================================================
-function handleBulkRecalc() {
+function handleBulkRecalc(data) {
+  var examId = String((data && data.examId) || '').trim();
+
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SUBMISSIONS_SHEET);
   if (!sheet) {
@@ -1630,13 +1632,14 @@ function handleBulkRecalc() {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  var data    = sheet.getDataRange().getValues();
+  var rows    = sheet.getDataRange().getValues();
   var changed = 0;
   var effectiveBoundaries = loadEffectiveBoundaries();
 
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
+  for (var i = 1; i < rows.length; i++) {
+    var row = rows[i];
     if (row[COL.Q1_AI - 1] === '' || row[COL.Q1_AI - 1] === null || row[COL.Q1_AI - 1] === undefined) { continue; }
+    if (examId && String(row[COL.EXAM_ID - 1] || '').trim().toLowerCase() !== examId.toLowerCase()) { continue; }
 
     var updated  = recalcRow(row, effectiveBoundaries);
     var sheetRow = i + 1;
@@ -1757,7 +1760,9 @@ function handleResendEmails(data) {
 // ============================================================
 // REGRADE ALL MC (from admin.html)
 // ============================================================
-function handleRegradeAllMC() {
+function handleRegradeAllMC(data) {
+  var examId = String((data && data.examId) || '').trim();
+
   var ss          = SpreadsheetApp.getActiveSpreadsheet();
   var detailSheet = ss.getSheetByName(DETAILS_SHEET);
   var submSheet   = ss.getSheetByName(SUBMISSIONS_SHEET);
@@ -1767,6 +1772,22 @@ function handleRegradeAllMC() {
     return ContentService
       .createTextOutput(JSON.stringify({success: false, error: 'Required sheet not found.'}))
       .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Detailed_Answers has no exam column of its own (only a timestamp back to
+  // Submissions), so scoping to one exam means first collecting which
+  // timestamps belong to it.
+  var validTs = null;
+  if (examId) {
+    validTs = {};
+    var submDataForScope = submSheet.getDataRange().getValues();
+    for (var sci = 1; sci < submDataForScope.length; sci++) {
+      var scRow  = submDataForScope[sci];
+      var scExam = String(scRow[COL.EXAM_ID - 1] || '').trim();
+      if (scExam.toLowerCase() === examId.toLowerCase()) {
+        validTs[String(scRow[COL.TIMESTAMP - 1])] = true;
+      }
+    }
   }
 
   // Build correct-answer map from Questions sheet
@@ -1789,6 +1810,7 @@ function handleRegradeAllMC() {
   for (var di = 1; di < detailData.length; di++) {
     var dr = detailData[di];
     if (String(dr[DCOL.TYPE]).trim() !== 'mc') { continue; }
+    if (validTs && !(String(dr[DCOL.TIMESTAMP]) in validTs)) { continue; }
 
     var qid   = String(dr[DCOL.QUESTION_ID]).trim();
     var qInfo = questionMap[qid];

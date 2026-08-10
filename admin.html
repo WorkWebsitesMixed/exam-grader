@@ -188,6 +188,7 @@
             font-weight: 600;
             cursor: pointer;
         }
+        button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         button.btn-close  { background: var(--border); color: var(--text); }
         button.btn-close:hover  { background: #CBD5E1; }
@@ -330,6 +331,59 @@
         .save-status { font-size: 13px; margin-top: 10px; display: none; }
         .save-status.success { color: var(--secondary); display: block; }
         .save-status.error   { color: var(--error);     display: block; }
+
+        /* Tier 2: Exam Settings regrouped by task, not sheet order */
+        .config-section { margin-top: 22px; }
+        .config-section:first-of-type { margin-top: 0; }
+        .config-subhead {
+            font-size: 12px; font-weight: 700; color: var(--primary);
+            text-transform: uppercase; letter-spacing: 0.06em;
+            padding-bottom: 6px; margin-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .section-hint { font-size: 11.5px; color: var(--muted); margin: -6px 0 12px; line-height: 1.4; }
+
+        .exam-id-callout {
+            border: 1px solid var(--border); border-left: 3px solid var(--warning);
+            background: var(--bg); border-radius: 6px; padding: 12px 14px;
+        }
+        .exam-id-callout .callout-text { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.4; }
+        .exam-id-callout .callout-text code { background: #E9EEF3; padding: 1px 5px; border-radius: 3px; }
+
+        .igcse-reason { font-size: 11px; color: var(--warning); margin-top: 5px; line-height: 1.4; }
+        .field-error { font-size: 11px; color: var(--error); margin-top: 5px; display: none; }
+
+        .maintenance-block .config-header:hover { background: #FDF6EC; }
+        .maintenance-block h3 { color: #7C4A00; }
+
+        /* Save Settings lives in a bar that only appears once something changed,
+           so it isn't buried at the bottom of the panel behind louder buttons. */
+        .sticky-save-bar {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+            display: none; justify-content: center;
+            padding: 14px 20px; background: white;
+            border-top: 1px solid var(--border); box-shadow: 0 -4px 14px rgba(15,23,42,0.08);
+        }
+        .sticky-save-bar.visible { display: flex; }
+        .sticky-save-bar-inner {
+            width: 100%; max-width: 1100px;
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+        }
+        .sticky-save-bar .save-status { margin: 0; }
+
+        .config-subhead-toggle { cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .config-subhead-toggle:hover { color: #163d5e; }
+        .config-subhead-chevron { font-weight: 400; text-transform: none; letter-spacing: normal; }
+
+        .checkbox-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+        .checkbox-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+            font-size: 13px; cursor: pointer; user-select: none; background: var(--bg);
+        }
+        .checkbox-chip:has(input:checked) {
+            border-color: var(--secondary); background: #EAF7EF; color: #1D6F42; font-weight: 600;
+        }
 
         /* Password screen */
         .password-screen {
@@ -526,139 +580,208 @@
                     </div>
                     <div class="pp-issues" id="ppIssues"></div>
                 </div>
-                <div class="config-grid">
-                    <div class="config-field" style="grid-column: 1 / -1;">
-                        <label>Exam Active</label>
-                        <div class="toggle-wrap">
-                            <label class="toggle">
-                                <input type="checkbox" id="cfgActive" onchange="updateActiveLabel()">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span class="toggle-label off" id="activeLabel">Off</span>
+                <div class="config-section">
+                    <div class="config-subhead">This Exam</div>
+                    <div class="config-grid">
+                        <div class="config-field" style="grid-column: 1 / -1; display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+                            <div style="flex:0 0 auto;">
+                                <label>Exam Active</label>
+                                <div class="toggle-wrap">
+                                    <label class="toggle">
+                                        <input type="checkbox" id="cfgActive" onchange="updateActiveLabel()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label off" id="activeLabel">Off</span>
+                                </div>
+                            </div>
+                            <div class="exam-id-callout" style="flex:1 1 320px; min-width:280px;">
+                                <label>Exam ID <span style="text-transform:none; font-weight:400; color:var(--muted);">— machine key</span></label>
+                                <input type="text" id="cfgExamId" placeholder="e.g. exam_LDR">
+                                <p class="callout-text">Must exactly match the <code>Exam</code> column in the Questions sheet (case-insensitive) — this is what actually selects which questions are served. Changing it also lets a student with the same email retake.</p>
+                            </div>
                         </div>
-                    </div>
-                    <div class="config-field">
-                        <label>Exam ID</label>
-                        <input type="text" id="cfgExamId" placeholder="e.g. exam_LDR">
-                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Change this before each new exam. Students with the same email can retake when the Exam ID changes.</p>
-                    </div>
-                    <div class="config-field">
-                        <label>Exam Title</label>
-                        <input type="text" id="cfgTitle" placeholder="e.g. Smart Vertical Garden">
-                    </div>
-                    <div class="config-field">
-                        <label>Subtitle</label>
-                        <input type="text" id="cfgSubtitle" placeholder="e.g. Select your question set">
-                    </div>
-                    <div class="config-field">
-                        <label>Duration (minutes)</label>
-                        <input type="number" id="cfgDuration" min="1" max="180">
-                    </div>
-                    <div class="config-field">
-                        <label>Class Options (comma-separated)</label>
-                        <input type="text" id="cfgClasses" placeholder="e.g. 10A,10B,10C">
-                    </div>
-                    <div class="config-field">
-                        <label>Admin Password</label>
-                        <input type="password" id="cfgPassword" placeholder="New password (blank = keep current)" autocomplete="new-password">
-                    </div>
-                    <div class="config-field" style="grid-column: 1 / -1;">
-                        <label>IGCSE Exam (standardized)</label>
-                        <div class="toggle-wrap">
-                            <label class="toggle">
-                                <input type="checkbox" id="cfgIgcse" onchange="updateIgcseLabel(); applyIgcseUI();">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="igcseLabel" class="toggle-label off">Off</span>
+                        <div class="config-field">
+                            <label>Exam Title</label>
+                            <input type="text" id="cfgTitle" placeholder="e.g. Smart Vertical Garden">
                         </div>
-                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">On = every student gets the identical paper: question randomization and sampling are disabled, multiple-choice options keep their fixed printed order, and a marking-scheme uploader appears in the Questions panel.</p>
-                    </div>
-                    <div class="config-field" style="grid-column: 1 / -1;">
-                        <label>Question Sets</label>
-                        <div class="toggle-wrap">
-                            <label class="toggle">
-                                <input type="checkbox" id="cfgSetMode" onchange="updateSetModeLabel()">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="setModeLabel" class="toggle-label off">Single set</span>
+                        <div class="config-field">
+                            <label>Subtitle</label>
+                            <input type="text" id="cfgSubtitle" placeholder="e.g. Select your question set">
                         </div>
-                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">On = three sets (A/B/C) with set selection &amp; preview. Off = a single set: students skip set selection and the preview, going straight to class selection then the exam.</p>
-                    </div>
-                    <div class="config-field">
-                        <label>Randomize from Question Bank</label>
-                        <div class="toggle-wrap">
-                            <label class="toggle">
-                                <input type="checkbox" id="cfgRandomize" onchange="updateRandomizeLabel()">
-                                <span class="slider"></span>
-                            </label>
-                            <span id="randomizeLabel" class="toggle-label off">Off</span>
+                        <div class="config-field">
+                            <label>Duration (minutes)</label>
+                            <input type="number" id="cfgDuration" min="1" max="180">
                         </div>
-                    </div>
-                    <div class="config-field">
-                        <label>Questions per Set (0 = all)</label>
-                        <input type="number" id="cfgQPerSet" min="0" placeholder="0" style="width:100px;">
-                    </div>
-                    <div class="config-field">
-                        <label>Open-Ended per Set (0 = no guarantee)</label>
-                        <input type="number" id="cfgOePerSet" min="0" placeholder="0" style="width:100px;">
-                        <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Exactly this many OE questions are drawn first; remaining slots fill with MC. Only applies when Questions per Set &gt; 0.</p>
-                    </div>
-                    <div class="config-field" style="grid-column: 1 / -1; margin-top:8px;">
-                        <label style="font-weight:700; font-size:13px; color:var(--primary);">Set Card Labels</label>
-                        <p style="font-size:11px; color:var(--muted); margin:4px 0 0;">Controls the title, max grade, and description shown on each set card on the exam page.</p>
-                    </div>
-                    <div class="config-field">
-                        <label>Set A — Label</label>
-                        <input type="text" id="cfgSetALabel" placeholder="e.g. SET A — Standard">
-                    </div>
-                    <div class="config-field">
-                        <label>Set A — Max Grade</label>
-                        <input type="text" id="cfgSetAMaxGrade" placeholder="e.g. 2.3" style="width:100px;">
-                    </div>
-                    <div class="config-field">
-                        <label>Set A — Description</label>
-                        <input type="text" id="cfgSetADesc" placeholder="e.g. Foundational questions.">
-                    </div>
-                    <div class="config-field">
-                        <label>Set B — Label</label>
-                        <input type="text" id="cfgSetBLabel" placeholder="e.g. SET B — Intermediate">
-                    </div>
-                    <div class="config-field">
-                        <label>Set B — Max Grade</label>
-                        <input type="text" id="cfgSetBMaxGrade" placeholder="e.g. 3.3" style="width:100px;">
-                    </div>
-                    <div class="config-field">
-                        <label>Set B — Description</label>
-                        <input type="text" id="cfgSetBDesc" placeholder="e.g. Application &amp; calculation.">
-                    </div>
-                    <div class="config-field">
-                        <label>Set C — Label</label>
-                        <input type="text" id="cfgSetCLabel" placeholder="e.g. SET C — Advanced">
-                    </div>
-                    <div class="config-field">
-                        <label>Set C — Max Grade</label>
-                        <input type="text" id="cfgSetCMaxGrade" placeholder="e.g. 4.0" style="width:100px;">
-                    </div>
-                    <div class="config-field">
-                        <label>Set C — Description</label>
-                        <input type="text" id="cfgSetCDesc" placeholder="e.g. Complex system analysis.">
                     </div>
                 </div>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px;">
-                    <button class="btn btn-save" onclick="saveConfig()">Save Settings</button>
-                    <button class="btn" id="recalcBtn" onclick="recalcGrades()"
-                        style="background:#F39C12; color:white; border:none;"
-                        title="Recalculates open-ended scores, totals, percentages and grades for all submissions using current grade boundaries and any overrides.">
+
+                <div class="config-section">
+                    <div class="config-subhead">Who Sits It</div>
+                    <div class="config-grid">
+                        <div class="config-field" style="grid-column: 1 / -1; display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+                            <div style="flex:1 1 420px; min-width:320px;">
+                                <label>Class Options</label>
+                                <div class="checkbox-grid" id="cfgClassesGrid">
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="10A"> 10A</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="10B"> 10B</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="10C"> 10C</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="11A"> 11A</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="11B"> 11B</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="11C"> 11C</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="12A"> 12A</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="12B"> 12B</label>
+                                    <label class="checkbox-chip"><input type="checkbox" class="cfgClassCheckbox" value="12C"> 12C</label>
+                                </div>
+                                <p style="font-size:11px; color:var(--muted); margin-top:7px; line-height:1.4;">Which sections can select themselves on the exam page. Check the ones sitting this exam.</p>
+                            </div>
+                            <div style="flex:0 0 auto; min-width:220px;">
+                                <label>Question Sets</label>
+                                <div class="toggle-wrap">
+                                    <label class="toggle">
+                                        <input type="checkbox" id="cfgSetMode" onchange="updateSetModeLabel(); applySetModeUI();">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span id="setModeLabel" class="toggle-label off">Single set</span>
+                                </div>
+                                <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4; max-width:260px;">On = three sets (A/B/C) with set selection &amp; preview. Off = single set: straight to class selection then the exam.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-subhead">How It's Assembled</div>
+                    <div class="config-grid">
+                        <div class="config-field">
+                            <label>IGCSE Exam (standardized)</label>
+                            <div class="toggle-wrap">
+                                <label class="toggle">
+                                    <input type="checkbox" id="cfgIgcse" onchange="updateIgcseLabel(); applyIgcseUI();">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="igcseLabel" class="toggle-label off">Off</span>
+                            </div>
+                            <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">On = every student gets the identical paper: randomization/sampling disabled, MC options keep their fixed printed order, marking-scheme uploader appears in Questions.</p>
+                        </div>
+                        <div class="config-field" id="randomizeField">
+                            <label>Randomize from Question Bank</label>
+                            <div class="toggle-wrap">
+                                <label class="toggle">
+                                    <input type="checkbox" id="cfgRandomize" onchange="updateRandomizeLabel()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="randomizeLabel" class="toggle-label off">Off</span>
+                            </div>
+                            <p class="igcse-reason" id="randomizeReason" style="display:none;">Disabled — IGCSE requires every student to get an identical paper.</p>
+                        </div>
+                        <div class="config-field" id="qPerSetField">
+                            <label>Questions per Set (0 = all)</label>
+                            <input type="number" id="cfgQPerSet" min="0" placeholder="0" style="width:100px;">
+                            <p class="igcse-reason" id="qPerSetReason" style="display:none;">Disabled — IGCSE requires every student to get an identical paper.</p>
+                        </div>
+                        <div class="config-field" id="oePerSetField">
+                            <label>Open-Ended per Set (0 = no guarantee)</label>
+                            <input type="number" id="cfgOePerSet" min="0" placeholder="0" style="width:100px;">
+                            <p style="font-size:11px; color:var(--muted); margin-top:5px; line-height:1.4;">Exactly this many OE questions are drawn first; remaining slots fill with MC. Only applies when Questions per Set &gt; 0.</p>
+                            <p class="igcse-reason" id="oePerSetReason" style="display:none;">Disabled — IGCSE requires every student to get an identical paper.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-section" id="setCardSection">
+                    <div class="config-subhead">What Students See</div>
+                    <p class="section-hint">Controls the title, max grade, and description shown on each set card on the exam page.</p>
+                    <div class="config-grid">
+                        <div class="config-field">
+                            <label>Set A — Label</label>
+                            <input type="text" id="cfgSetALabel" placeholder="e.g. SET A — Standard">
+                        </div>
+                        <div class="config-field">
+                            <label>Set A — Max Grade</label>
+                            <input type="text" id="cfgSetAMaxGrade" placeholder="e.g. 2.3" style="width:100px;">
+                        </div>
+                        <div class="config-field">
+                            <label>Set A — Description</label>
+                            <input type="text" id="cfgSetADesc" placeholder="e.g. Foundational questions.">
+                        </div>
+                        <div id="setBCFields" style="display:contents;">
+                            <div class="config-field">
+                                <label>Set B — Label</label>
+                                <input type="text" id="cfgSetBLabel" placeholder="e.g. SET B — Intermediate">
+                            </div>
+                            <div class="config-field">
+                                <label>Set B — Max Grade</label>
+                                <input type="text" id="cfgSetBMaxGrade" placeholder="e.g. 3.3" style="width:100px;">
+                            </div>
+                            <div class="config-field">
+                                <label>Set B — Description</label>
+                                <input type="text" id="cfgSetBDesc" placeholder="e.g. Application &amp; calculation.">
+                            </div>
+                            <div class="config-field">
+                                <label>Set C — Label</label>
+                                <input type="text" id="cfgSetCLabel" placeholder="e.g. SET C — Advanced">
+                            </div>
+                            <div class="config-field">
+                                <label>Set C — Max Grade</label>
+                                <input type="text" id="cfgSetCMaxGrade" placeholder="e.g. 4.0" style="width:100px;">
+                            </div>
+                            <div class="config-field">
+                                <label>Set C — Description</label>
+                                <input type="text" id="cfgSetCDesc" placeholder="e.g. Complex system analysis.">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-subhead config-subhead-toggle" onclick="toggleSecurity()">
+                        <span>Security</span>
+                        <span class="config-subhead-chevron" id="securityChevron">▶</span>
+                    </div>
+                    <div class="config-grid" id="securityBody" style="display:none;">
+                        <div class="config-field">
+                            <label>Admin Password</label>
+                            <input type="password" id="cfgPassword" placeholder="New password (blank = keep current)" autocomplete="new-password">
+                        </div>
+                        <div class="config-field">
+                            <label>Confirm New Password</label>
+                            <input type="password" id="cfgPasswordConfirm" placeholder="Retype new password" autocomplete="new-password">
+                            <p class="field-error" id="cfgPasswordError">Passwords don't match.</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="config-panel maintenance-block" style="margin-bottom:24px;">
+            <div class="config-header" onclick="toggleMaintenance()">
+                <h3>🛠 Maintenance</h3>
+                <span id="maintenanceChevron" style="color:var(--muted);">▼</span>
+            </div>
+            <div class="config-body" id="maintenanceBody">
+                <p class="section-hint" style="margin-top:0;">Bulk rewrite operations. Scoped to one exam at a time — use sparingly.</p>
+                <p class="section-hint" id="maintenanceTarget" style="margin-top:-6px; font-weight:600;"></p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <button class="btn" id="recalcBtn" onclick="recalcGrades()" style="background:#F39C12; color:white; border:none;">
                         Recalculate All Grades
                     </button>
-                    <button class="btn" id="regradeBtn" onclick="regradeAllMC()"
-                        style="background:#7C3AED; color:white; border:none;"
-                        title="Re-grades every MC answer against the current correct-answer key in the Questions sheet, then recalculates totals and final grades.">
+                    <p style="font-size:12px; color:var(--muted); margin:0;">Recalculates open-ended scores, totals, percentages and grades for all submissions using current grade boundaries and any overrides.</p>
+                </div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:14px;">
+                    <button class="btn" id="regradeBtn" onclick="regradeAllMC()" style="background:#7C3AED; color:white; border:none;">
                         Regrade All MC
                     </button>
-                    <p id="recalcStatus" style="font-size:13px; margin:0;"></p>
+                    <p style="font-size:12px; color:var(--muted); margin:0;">Re-grades every MC answer against the current correct-answer key in the Questions sheet, then recalculates totals and final grades.</p>
                 </div>
-                <p class="save-status" id="saveStatus"></p>
+                <p id="recalcStatus" style="font-size:13px; margin-top:10px;"></p>
+            </div>
+        </div>
+
+        <div class="sticky-save-bar" id="stickySaveBar">
+            <div class="sticky-save-bar-inner">
+                <button class="btn btn-save" id="stickySaveBtn" onclick="saveConfig()">Save Settings</button>
+                <p class="save-status" id="stickySaveStatus"></p>
             </div>
         </div>
 
@@ -712,7 +835,7 @@
 
         <div class="toolbar">
             <label>Exam:</label>
-            <select id="examFilter" onchange="renderTable()">
+            <select id="examFilter" onchange="renderTable(); updateMaintenanceTargeting();">
                 <option value="">All Exams</option>
             </select>
 
@@ -892,6 +1015,7 @@
     var allSubmissions = [];
     var currentConfig  = {};
     var currentModalSub = null;
+    var configDirty = false;  // drives the sticky Save bar — only shown once something changed
     // Newest first: after running an exam you are looking for what just came in,
     // not for surnames beginning with A.
     var sortKey = 'timestamp';
@@ -1002,7 +1126,6 @@
 
     function applyConfig(config) {
         currentConfig = config;
-        applySetModeUI();
 
         if (config.exam_title) {
             document.getElementById('adminTitle').textContent = config.exam_title + ' — Admin';
@@ -1017,11 +1140,14 @@
         document.getElementById('cfgTitle').value    = config.exam_title    || '';
         document.getElementById('cfgSubtitle').value = config.exam_subtitle || '';
         document.getElementById('cfgDuration').value = config.exam_duration_minutes || '';
-        document.getElementById('cfgClasses').value   = config.class_options   || '';
+        setSelectedClasses(config.class_options || '');
         document.getElementById('cfgPassword').value  = '';  // never pre-filled
+        document.getElementById('cfgPasswordConfirm').value = '';
+        document.getElementById('cfgPasswordError').style.display = 'none';
         document.getElementById('cfgRandomize').checked = (config.randomize_questions === 'true');
         document.getElementById('cfgSetMode').checked   = (config.set_mode !== 'single');
         updateSetModeLabel();
+        applySetModeUI();
         document.getElementById('cfgIgcse').checked = (config.exam_type === 'igcse');
         updateIgcseLabel();
         applyIgcseUI();
@@ -1053,6 +1179,52 @@
             if (el && !el.dataset.ppBound) { el.dataset.ppBound = '1'; el.addEventListener('change', updatePaperPreview); }
         });
         updatePaperPreview();
+        bindConfigDirtyTracking();
+        clearConfigDirty();
+    }
+
+    // Every field that saveConfig() reads — edit any of these and the sticky
+    // Save bar appears. Bound once (dataset flag), same pattern as ppBound above.
+    function bindConfigDirtyTracking() {
+        var textLike = ['cfgExamId', 'cfgTitle', 'cfgSubtitle', 'cfgDuration',
+            'cfgQPerSet', 'cfgOePerSet', 'cfgSetALabel', 'cfgSetAMaxGrade', 'cfgSetADesc',
+            'cfgSetBLabel', 'cfgSetBMaxGrade', 'cfgSetBDesc', 'cfgSetCLabel', 'cfgSetCMaxGrade',
+            'cfgSetCDesc', 'cfgPassword', 'cfgPasswordConfirm'];
+        var toggleLike = ['cfgActive', 'cfgRandomize', 'cfgSetMode', 'cfgIgcse'];
+        textLike.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el && !el.dataset.dirtyBound) { el.dataset.dirtyBound = '1'; el.addEventListener('input', markConfigDirty); }
+        });
+        toggleLike.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el && !el.dataset.dirtyBound) { el.dataset.dirtyBound = '1'; el.addEventListener('change', markConfigDirty); }
+        });
+        document.querySelectorAll('.cfgClassCheckbox').forEach(function(el) {
+            if (!el.dataset.dirtyBound) { el.dataset.dirtyBound = '1'; el.addEventListener('change', markConfigDirty); }
+        });
+    }
+
+    function getSelectedClasses() {
+        return Array.prototype.slice.call(document.querySelectorAll('.cfgClassCheckbox:checked'))
+            .map(function(el) { return el.value; })
+            .join(',');
+    }
+
+    function setSelectedClasses(csv) {
+        var selected = csv.split(',').map(function(c) { return c.trim(); }).filter(Boolean);
+        document.querySelectorAll('.cfgClassCheckbox').forEach(function(el) {
+            el.checked = selected.indexOf(el.value) !== -1;
+        });
+    }
+
+    function markConfigDirty() {
+        configDirty = true;
+        document.getElementById('stickySaveBar').classList.add('visible');
+    }
+
+    function clearConfigDirty() {
+        configDirty = false;
+        document.getElementById('stickySaveBar').classList.remove('visible');
     }
 
     function toggleConfig() {
@@ -1060,6 +1232,24 @@
         var chevron = document.getElementById('configChevron');
         var open    = body.classList.toggle('open');
         chevron.textContent = open ? '▲' : '▼';
+    }
+
+    function toggleMaintenance() {
+        var body    = document.getElementById('maintenanceBody');
+        var chevron = document.getElementById('maintenanceChevron');
+        var open    = body.classList.toggle('open');
+        chevron.textContent = open ? '▲' : '▼';
+    }
+
+    // Security sits inside the already-collapsible Exam Settings panel, closed
+    // by default — the password fields shouldn't be the first thing visible
+    // every time a teacher opens Settings.
+    function toggleSecurity() {
+        var body    = document.getElementById('securityBody');
+        var chevron = document.getElementById('securityChevron');
+        var open    = body.style.display !== 'none';
+        body.style.display = open ? 'none' : '';
+        chevron.textContent = open ? '▶' : '▼';
     }
 
     function updateActiveLabel() {
@@ -1285,12 +1475,15 @@
     // the marking-scheme uploader in the Questions panel.
     function applyIgcseUI() {
         var igcse = document.getElementById('cfgIgcse').checked;
-        ['cfgRandomize', 'cfgQPerSet', 'cfgOePerSet'].forEach(function(id) {
+        var reasonIds = { cfgRandomize: 'randomizeReason', cfgQPerSet: 'qPerSetReason', cfgOePerSet: 'oePerSetReason' };
+        Object.keys(reasonIds).forEach(function(id) {
             var el = document.getElementById(id);
             if (!el) { return; }
             el.disabled = igcse;
             var field = el.closest('.config-field');
             if (field) { field.style.opacity = igcse ? '0.5' : ''; }
+            var reason = document.getElementById(reasonIds[id]);
+            if (reason) { reason.style.display = igcse ? 'block' : 'none'; }
         });
         var s = document.getElementById('schemeSection');
         if (s) { s.style.display = igcse ? 'block' : 'none'; }
@@ -1320,7 +1513,7 @@
     }
 
     function applySetModeUI() {
-        var single = !!(currentConfig && currentConfig.set_mode === 'single');
+        var single = !document.getElementById('cfgSetMode').checked;
         ['A', 'B', 'C'].forEach(function(x) {
             var qt = document.getElementById('qtab-' + x);
             if (qt) { qt.style.display = single ? 'none' : ''; }
@@ -1330,6 +1523,9 @@
         var qSetField = document.getElementById('qSetField');
         if (qSetField) { qSetField.style.display = single ? 'none' : ''; }
         if (single) { currentQSet = 'A'; }
+        // Set B/C card-label fields are inert in single-set mode — hide, don't just dim.
+        var bc = document.getElementById('setBCFields');
+        if (bc) { bc.style.display = single ? 'none' : 'contents'; }
     }
 
     function showQSet(s) {
@@ -1714,8 +1910,17 @@
     }
 
     function saveConfig() {
-        var btn    = document.querySelector('.btn-save');
-        var status = document.getElementById('saveStatus');
+        var btn    = document.getElementById('stickySaveBtn');
+        var status = document.getElementById('stickySaveStatus');
+
+        var newPw        = document.getElementById('cfgPassword').value;
+        var newPwConfirm = document.getElementById('cfgPasswordConfirm').value;
+        var pwError      = document.getElementById('cfgPasswordError');
+        if (newPw && newPw !== newPwConfirm) {
+            pwError.style.display = 'block';
+            return;
+        }
+        pwError.style.display = 'none';
 
         var updates = {
             exam_id:                document.getElementById('cfgExamId').value.trim(),
@@ -1723,7 +1928,7 @@
             exam_title:             document.getElementById('cfgTitle').value.trim(),
             exam_subtitle:          document.getElementById('cfgSubtitle').value.trim(),
             exam_duration_minutes:  document.getElementById('cfgDuration').value.trim(),
-            class_options:          document.getElementById('cfgClasses').value.trim(),
+            class_options:          getSelectedClasses(),
             randomize_questions:    document.getElementById('cfgRandomize').checked ? 'true' : 'false',
             exam_type:              document.getElementById('cfgIgcse').checked ? 'igcse' : 'standard',
             set_mode:               document.getElementById('cfgSetMode').checked ? 'triple' : 'single',
@@ -1740,7 +1945,6 @@
             set_c_description:      document.getElementById('cfgSetCDesc').value.trim()
         };
         if (!updates.exam_id) { delete updates.exam_id; }  // don't blank it accidentally
-        var newPw = document.getElementById('cfgPassword').value;
         if (newPw) { updates['admin_password'] = newPw; }
 
         // Last line of defence before a broken exam reaches students. The preview
@@ -1772,6 +1976,7 @@
                 status.textContent = 'Settings saved.';
                 if (newPw) { sessionStorage.setItem(adminSessionKey, newPw); }
                 document.getElementById('cfgPassword').value = '';
+                document.getElementById('cfgPasswordConfirm').value = '';
                 // Reflect title changes immediately
                 if (updates.exam_title) {
                     document.getElementById('adminTitle').textContent = updates.exam_title + ' — Admin';
@@ -1780,6 +1985,12 @@
                 if (updates.exam_subtitle) {
                     document.getElementById('adminSubtitle').textContent = updates.exam_subtitle;
                 }
+                // Leave the bar up briefly so "Settings saved." is actually seen,
+                // then collapse it — re-editing before it fires cancels the hide.
+                configDirty = false;
+                setTimeout(function() {
+                    if (!configDirty) { document.getElementById('stickySaveBar').classList.remove('visible'); }
+                }, 1500);
             } else {
                 throw new Error(data.error || 'Unknown error');
             }
@@ -1834,6 +2045,30 @@
             opt.textContent = c;
             sel.appendChild(opt);
         });
+
+        updateMaintenanceTargeting();
+    }
+
+    // Recalculate/Regrade are bulk, irreversible rewrites — scope them to
+    // whatever exam is picked in the toolbar filter above, and refuse to run
+    // across every exam at once ("All Exams") rather than silently rewriting
+    // exams the teacher isn't even looking at.
+    function updateMaintenanceTargeting() {
+        var examSel     = document.getElementById('examFilter');
+        var exam        = examSel ? examSel.value : '';
+        var hint        = document.getElementById('maintenanceTarget');
+        var recalcBtn   = document.getElementById('recalcBtn');
+        var regradeBtn  = document.getElementById('regradeBtn');
+        if (!hint || !recalcBtn || !regradeBtn) { return; }
+        if (exam) {
+            hint.textContent = 'Target: ' + exam + ' (set via the Exam filter above the submissions table).';
+            recalcBtn.disabled = false;
+            regradeBtn.disabled = false;
+        } else {
+            hint.textContent = 'Pick a specific exam in the Exam filter above the submissions table to enable these — bulk rewrites across every exam at once are blocked.';
+            recalcBtn.disabled = true;
+            regradeBtn.disabled = true;
+        }
     }
 
     function reloadSubmissions() {
@@ -1849,7 +2084,9 @@
     function regradeAllMC() {
         var btn    = document.getElementById('regradeBtn');
         var status = document.getElementById('recalcStatus');
-        if (!confirm('Regrade all MC answers?\n\nThis reads the current correct-answer key from the Questions sheet and recalculates MC scores, totals, and grades for every submission. It cannot be undone.')) { return; }
+        var exam   = document.getElementById('examFilter').value;
+        if (!exam) { return; }  // button is disabled in this state; belt-and-braces
+        if (!confirm('Regrade all MC answers for exam "' + exam + '"?\n\nThis reads the current correct-answer key from the Questions sheet and recalculates MC scores, totals, and grades for every submission in this exam. It cannot be undone.')) { return; }
         btn.disabled = true;
         btn.textContent = 'Regrading...';
         status.textContent = '';
@@ -1857,7 +2094,7 @@
 
         fetch(appsScriptUrl, {
             method: 'POST',
-            body: JSON.stringify({ action: 'regrademc', adminPassword: getStoredAdminPassword() })
+            body: JSON.stringify({ action: 'regrademc', examId: exam, adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1871,8 +2108,8 @@
             status.textContent = 'Failed: ' + err.message;
         })
         .finally(function() {
-            btn.disabled = false;
             btn.textContent = 'Regrade All MC';
+            updateMaintenanceTargeting();
         });
     }
 
@@ -1956,7 +2193,9 @@
     function recalcGrades() {
         var btn    = document.getElementById('recalcBtn');
         var status = document.getElementById('recalcStatus');
-        if (!confirm('Recalculate grades for all submissions?\n\nThis applies current grade boundaries and any score overrides to every row. It cannot be undone.')) { return; }
+        var exam   = document.getElementById('examFilter').value;
+        if (!exam) { return; }  // button is disabled in this state; belt-and-braces
+        if (!confirm('Recalculate grades for exam "' + exam + '"?\n\nThis applies current grade boundaries and any score overrides to every submission in this exam. It cannot be undone.')) { return; }
         btn.disabled = true;
         btn.textContent = 'Recalculating...';
         status.textContent = '';
@@ -1964,7 +2203,7 @@
 
         fetch(appsScriptUrl, {
             method: 'POST',
-            body: JSON.stringify({ action: 'recalculate', adminPassword: getStoredAdminPassword() })
+            body: JSON.stringify({ action: 'recalculate', examId: exam, adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1978,8 +2217,8 @@
             status.textContent = 'Failed: ' + err.message;
         })
         .finally(function() {
-            btn.disabled = false;
             btn.textContent = 'Recalculate All Grades';
+            updateMaintenanceTargeting();
         });
     }
 
