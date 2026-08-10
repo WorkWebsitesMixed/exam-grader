@@ -1241,26 +1241,35 @@
         var chevron = document.getElementById('questionsChevron');
         var open    = body.classList.toggle('open');
         chevron.textContent = open ? '▲' : '▼';
-        if (open && allQuestions.length === 0) { loadQuestions(); }
+        if (open && !questionsLoaded && !questionsLoading) { loadQuestions(); }
     }
 
     function loadQuestions() {
         var msg = document.getElementById('questionsLoadMsg');
         msg.textContent = 'Loading...';
+        questionsLoading = true;
+        questionsFailed  = false;
         fetch(appsScriptUrl, {
             method: 'POST',
             body: JSON.stringify({ action: 'adminQuestions', adminPassword: getStoredAdminPassword() })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            allQuestions = data.questions || [];
+            allQuestions   = data.questions || [];
+            questionsLoaded  = true;
+            questionsLoading = false;
             renderQList('A');
             renderQList('B');
             renderQList('C');
             updatePaperPreview();   // counts depend on the question bank
             msg.textContent = '';
         })
-        .catch(function() { msg.textContent = 'Failed to load questions.'; });
+        .catch(function() {
+            questionsLoading = false;
+            questionsFailed  = true;
+            msg.textContent = 'Failed to load questions.';
+            updatePaperPreview();
+        });
     }
 
     // In single-set mode, hide all set tabs (Questions + Grade Boundaries) and
@@ -1975,7 +1984,14 @@
     }
 
 
-    var lastPaperState = null;
+    var lastPaperState   = null;
+    // The question bank is fetched lazily (only when the Questions panel is first
+    // opened), so an empty allQuestions means "not fetched yet" OR "genuinely
+    // empty". The preview must not confuse the two — it reported "no questions
+    // exist" on every fresh page load. Track the fetch explicitly.
+    var questionsLoaded  = false;
+    var questionsLoading = false;
+    var questionsFailed  = false;   // stops the preview retrying a failed fetch forever
 
     // ===== Paper preview =====================================================
     // Mirrors the backend's filter (Code.gs question load) and sampling maths so
@@ -2019,6 +2035,22 @@
     function updatePaperPreview() {
         var box = document.getElementById('paperPreview');
         if (!box || !document.getElementById('cfgExamId')) { return; }
+
+        // The preview is only truthful once the question bank has arrived. Fetch it
+        // rather than reporting on data we do not have.
+        if (!questionsLoaded) {
+            var failed = questionsFailed;
+            document.getElementById('ppSummary').textContent = failed ? 'Could not check' : 'Checking…';
+            document.getElementById('ppDetail').textContent  = '';
+            document.getElementById('ppIssues').innerHTML = failed
+                ? '<div class="pp-issue warn"><span>Could not read the question bank, so this preview is unavailable. ' +
+                  'Open the Questions panel below to retry.</span></div>'
+                : '';
+            box.className = 'paper-preview' + (failed ? ' is-warn' : '');
+            if (!questionsLoading && !failed) { loadQuestions(); }
+            lastPaperState = null;   // never let the save guard act on stale numbers
+            return;
+        }
 
         var examId   = document.getElementById('cfgExamId').value.trim();
         var igcse    = document.getElementById('cfgIgcse').checked;
