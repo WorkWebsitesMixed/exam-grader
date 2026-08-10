@@ -159,7 +159,7 @@ Major rebuild on the `v2-igcse` branch against a dev Apps Script copy; live site
 
 #### Multi-exam support (concurrent exams — different grades/topics)
 - Teacher resolved routing independently (session 6).
-- Admin panel still lacks an **Exam filter** — when multiple `exam_id` values exist in Submissions, the admin shows all of them mixed together. Stats, grade distribution, and distractor analysis should respect an exam filter the same way they respect class/set filters.
+- ~~Admin panel still lacks an **Exam filter**~~ **DONE** — the filter exists (`admin.html:675`, applied in `getFiltered()`). Corrected 2026-08-09; the old note would have sent someone rebuilding a feature that already ships. It defaults to *all exams*, so every `exam_id` ever used shows mixed together until you pick one — defaulting it to the active `exam_id` is a possible improvement.
 - **Not yet implemented** (admin filter side).
 
 ### Known pending features / bugs

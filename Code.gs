@@ -854,7 +854,11 @@ function handleSubmission(data) {
     var result     = (qInfoOe && qInfoOe.type === 'short')
                      ? gradeShortAnswer(q.text, rubricText, authPoints, q.questionText)
                      : gradeOpenEnded(q.text, rubricText, authPoints);
-    openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback});
+    // Carry the sheet's authoritative type and accepted answers through to
+    // writeDetailedAnswers, which otherwise labels every row 'openEnded'.
+    openFeedback.push({questionId: q.questionId, questionText: q.questionText || '', studentAnswer: q.text || '', score: result.score, maxScore: authPoints, feedback: result.feedback,
+                       type: (qInfoOe && qInfoOe.type) ? qInfoOe.type : 'openEnded',
+                       accepted: (qInfoOe && qInfoOe.type === 'short') ? rubricText : ''});
     openAIScores.push(result.score);
     totalOpenScore += result.score;
     openFeedbackParts.push(q.questionId + ': ' + result.score + '/' + authPoints + ' - ' + result.feedback);
@@ -981,10 +985,11 @@ function writeDetailedAnswers(d) {
     }
     sheet.appendRow(base.concat([
       oe.questionId,
-      'openEnded',
+      (fb && fb.type) ? fb.type : 'openEnded',
       oe.questionText || '',
       oe.text         || 'No answer',
-      '', '',
+      (fb && fb.accepted) ? fb.accepted : '',
+      '',
       fb ? fb.score : 0,
       oe.points,
       fb ? fb.feedback : ''
