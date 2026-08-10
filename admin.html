@@ -298,6 +298,35 @@
         .btn-save:hover { background: #163d5e; }
         .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
 
+        /* Paper preview — shows what the settings actually produce, before students see it */
+        .paper-preview {
+            border: 1px solid var(--border); border-left: 3px solid var(--primary);
+            background: var(--bg); border-radius: 6px; padding: 12px 14px; margin-bottom: 20px;
+        }
+        .paper-preview.is-error { border-left-color: var(--error); }
+        .paper-preview.is-warn  { border-left-color: var(--warning); }
+        .pp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+        .pp-title {
+            font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+            color: var(--muted); font-weight: 600;
+        }
+        .pp-summary { font-size: 14px; font-weight: 600; color: var(--text); }
+        .pp-detail  { font-size: 12px; color: var(--muted); }
+        .pp-issues  { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .pp-issue {
+            font-size: 12.5px; line-height: 1.45; padding: 8px 10px; border-radius: 5px;
+            display: flex; gap: 8px; align-items: flex-start;
+        }
+        .pp-issue.err  { background: #FDECEA; color: #8E2B20; }
+        .pp-issue.warn { background: #FEF5E7; color: #7E5109; }
+        .pp-issue.ok   { background: #EAF7EF; color: #1D6F42; }
+        .pp-fix {
+            margin-left: auto; flex: none; border: none; background: var(--primary);
+            color: #fff; font-size: 11.5px; font-weight: 600; padding: 4px 9px;
+            border-radius: 4px; cursor: pointer; white-space: nowrap;
+        }
+        .pp-fix:hover { filter: brightness(1.15); }
+
         .save-status { font-size: 13px; margin-top: 10px; display: none; }
         .save-status.success { color: var(--secondary); display: block; }
         .save-status.error   { color: var(--error);     display: block; }
@@ -486,6 +515,17 @@
                 <span id="configChevron" style="color:var(--muted);">▼</span>
             </div>
             <div class="config-body" id="configBody">
+                <!-- What the current settings actually produce. Recomputed on every
+                     change, so a paper that would serve zero questions says so here
+                     instead of on a student's screen with the timer already running. -->
+                <div id="paperPreview" class="paper-preview">
+                    <div class="pp-head">
+                        <span class="pp-title">What students will get</span>
+                        <span class="pp-summary" id="ppSummary">—</span>
+                        <span class="pp-detail" id="ppDetail"></span>
+                    </div>
+                    <div class="pp-issues" id="ppIssues"></div>
+                </div>
                 <div class="config-grid">
                     <div class="config-field" style="grid-column: 1 / -1;">
                         <label>Exam Active</label>
@@ -999,6 +1039,17 @@
         var active = config.exam_active === 'true' || config.exam_active === true;
         document.getElementById('cfgActive').checked = active;
         updateActiveLabel();
+
+        // Recompute the preview whenever any setting that shapes the paper changes.
+        ['cfgExamId', 'cfgDuration', 'cfgQPerSet', 'cfgOePerSet'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el && !el.dataset.ppBound) { el.dataset.ppBound = '1'; el.addEventListener('input', updatePaperPreview); }
+        });
+        ['cfgIgcse', 'cfgSetMode', 'cfgActive'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el && !el.dataset.ppBound) { el.dataset.ppBound = '1'; el.addEventListener('change', updatePaperPreview); }
+        });
+        updatePaperPreview();
     }
 
     function toggleConfig() {
@@ -1203,6 +1254,7 @@
             renderQList('A');
             renderQList('B');
             renderQList('C');
+            updatePaperPreview();   // counts depend on the question bank
             msg.textContent = '';
         })
         .catch(function() { msg.textContent = 'Failed to load questions.'; });
@@ -1894,6 +1946,151 @@
         });
     }
 
+
+    // ===== Paper preview =====================================================
+    // Mirrors the backend's filter (Code.gs question load) and sampling maths so
+    // the numbers here are the numbers students get. If the two ever diverge, this
+    // is the half to fix — the backend is authoritative.
+    function previewSets() {
+        return document.getElementById('cfgSetMode').checked ? ['A', 'B', 'C'] : ['A'];
+    }
+
+    function questionsForSet(setName, examId) {
+        var target = String(examId || '').trim().toLowerCase();
+        return allQuestions.filter(function(q) {
+            if (q.set !== setName) { return false; }
+            var tag = String(q.exam || '').trim();
+            // Untagged questions belong to every exam; tagged ones must match.
+            if (tag && target && tag.toLowerCase() !== target) { return false; }
+            return true;
+        });
+    }
+
+    function applySampling(pool, perSet, oePerSet) {
+        if (!(perSet > 0 && oePerSet > 0)) {
+            return (perSet > 0 && pool.length > perSet) ? pool.slice(0, perSet) : pool;
+        }
+        var mc = pool.filter(function(q) { return q.type === 'mc'; });
+        var oe = pool.filter(function(q) { return q.type !== 'mc'; });
+        var oeTake = Math.min(oePerSet, oe.length);
+        var mcTake = Math.min(Math.max(0, perSet - oeTake), mc.length);
+        return oe.slice(0, oeTake).concat(mc.slice(0, mcTake));
+    }
+
+    function estimateMinutes(qs) {
+        var mins = 0;
+        qs.forEach(function(q) {
+            var pts = Number(q.points) || 1;
+            mins += (q.type === 'openEnded') ? pts * 1.5 : 1;
+        });
+        return Math.max(5, Math.round(mins / 5) * 5);
+    }
+
+    function updatePaperPreview() {
+        var box = document.getElementById('paperPreview');
+        if (!box || !document.getElementById('cfgExamId')) { return; }
+
+        var examId   = document.getElementById('cfgExamId').value.trim();
+        var igcse    = document.getElementById('cfgIgcse').checked;
+        var active   = document.getElementById('cfgActive').checked;
+        var duration = parseInt(document.getElementById('cfgDuration').value, 10) || 0;
+        var perSet   = parseInt(document.getElementById('cfgQPerSet').value, 10)   || 0;
+        var oePerSet = parseInt(document.getElementById('cfgOePerSet').value, 10)  || 0;
+        if (igcse) { perSet = 0; oePerSet = 0; }   // IGCSE forces standardization
+
+        var sets   = previewSets();
+        var issues = [];
+        var lines  = [];
+        var worst  = 'ok';
+        function flag(level, html) {
+            issues.push('<div class="pp-issue ' + level + '">' + html + '</div>');
+            if (level === 'err') { worst = 'err'; }
+            else if (level === 'warn' && worst !== 'err') { worst = 'warn'; }
+        }
+
+        var grandTotal = 0, grandMarks = 0, estimate = 0;
+
+        sets.forEach(function(s) {
+            var pool     = questionsForSet(s, examId);
+            var served   = applySampling(pool, perSet, oePerSet);
+            var marks    = served.reduce(function(a, q) { return a + (Number(q.points) || 0); }, 0);
+            grandTotal  += served.length;
+            grandMarks  += marks;
+            estimate     = Math.max(estimate, estimateMinutes(served));
+
+            var counts = {mc: 0, short: 0, openEnded: 0};
+            served.forEach(function(q) { if (counts[q.type] !== undefined) { counts[q.type]++; } });
+            lines.push('Set ' + s + ': ' + served.length + ' q · ' + marks + ' marks (' +
+                       counts.mc + ' MC, ' + counts.short + ' short, ' + counts.openEnded + ' OE)');
+
+            if (pool.length && served.length < pool.length) {
+                flag('warn', '<span><strong>Set ' + s + ': ' + (pool.length - served.length) +
+                     ' of ' + pool.length + ' questions are being dropped</strong> by the per-set limits. ' +
+                     'Set <em>Questions per Set</em> and <em>Open-ended per Set</em> to 0 to use every question.' +
+                     '</span><button type="button" class="pp-fix" onclick="ppUseAllQuestions()">Use all</button>');
+            }
+        });
+
+        // The failure that ships a blank paper with a running timer.
+        if (grandTotal === 0) {
+            var tags = {};
+            allQuestions.forEach(function(q) {
+                var t = String(q.exam || '').trim();
+                if (t) { tags[t] = (tags[t] || 0) + 1; }
+            });
+            var names = Object.keys(tags);
+            if (allQuestions.length === 0) {
+                flag('err', '<span><strong>No questions exist yet.</strong> Add questions below, or import them from a PDF, before activating this exam.</span>');
+            } else if (names.length) {
+                var buttons = names.map(function(t) {
+                    return '<button type="button" class="pp-fix" onclick="ppUseExamId(' +
+                           JSON.stringify(t).replace(/"/g, '&quot;') + ')">Use &ldquo;' + escapeHtml(t) + '&rdquo;</button>';
+                }).join(' ');
+                flag('err', '<span><strong>This exam would show students a blank paper.</strong> ' +
+                     'No questions are tagged <code>' + escapeHtml(examId || '(empty)') + '</code>. ' +
+                     'Your Questions sheet has: ' +
+                     names.map(function(t) { return '<code>' + escapeHtml(t) + '</code> (' + tags[t] + ')'; }).join(', ') +
+                     '.</span>' + buttons);
+            } else {
+                flag('err', '<span><strong>No questions match.</strong> Check that questions exist for ' +
+                     (sets.length > 1 ? 'sets A/B/C' : 'Set A') + '.</span>');
+            }
+        }
+
+        if (grandTotal > 0 && duration > 0 && duration < estimate * 0.6) {
+            flag('warn', '<span><strong>' + duration + ' minutes may be too short.</strong> ' +
+                 'Roughly ' + estimate + ' min is realistic for ' + grandMarks + ' marks' +
+                 (grandMarks ? ' (extended responses take the most time)' : '') + '.</span>');
+        }
+
+        if (grandTotal > 0 && !active) {
+            flag('warn', '<span><strong>Exam is switched off.</strong> Students opening the link will be told it is not available.</span>');
+        }
+
+        if (grandTotal > 0 && worst === 'ok') {
+            flag('ok', '<span>Ready — ' + grandTotal + ' question' + (grandTotal !== 1 ? 's' : '') +
+                 ', ' + grandMarks + ' marks' + (active ? ', exam is live' : '') + '.</span>');
+        }
+
+        document.getElementById('ppSummary').textContent =
+            grandTotal === 0 ? 'Nothing — blank paper'
+                             : grandTotal + ' question' + (grandTotal !== 1 ? 's' : '') + ' · ' + grandMarks + ' marks';
+        document.getElementById('ppDetail').textContent =
+            grandTotal === 0 ? '' : lines.join('   ·   ') + '   ·   ~' + estimate + ' min needed';
+        document.getElementById('ppIssues').innerHTML = issues.join('');
+        box.className = 'paper-preview' + (worst === 'err' ? ' is-error' : worst === 'warn' ? ' is-warn' : '');
+    }
+
+    function ppUseExamId(tag) {
+        document.getElementById('cfgExamId').value = tag;
+        updatePaperPreview();
+    }
+
+    function ppUseAllQuestions() {
+        document.getElementById('cfgQPerSet').value  = '0';
+        document.getElementById('cfgOePerSet').value = '0';
+        updatePaperPreview();
+    }
 
     function getFiltered() {
         var exam  = document.getElementById('examFilter').value;
