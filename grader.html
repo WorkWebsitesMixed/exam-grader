@@ -391,6 +391,7 @@
         <div class="container" style="text-align:center; margin-top:120px;">
             <h2 style="color: var(--primary-color);">Loading Exam...</h2>
             <p style="color: var(--text-muted); margin-top:10px;">Fetching questions, please wait.</p>
+            <p class="retry-note" style="color: var(--text-muted); margin-top:6px; font-size:14px;"></p>
             <div style="margin-top:30px; font-size:36px;">⏳</div>
         </div>
     </div>
@@ -640,32 +641,56 @@
                 return;
             }
 
-            fetch(appsScriptUrl + '?action=questions')
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    if (data.success && data.questions) {
-                        questions = data.questions;
-                        if (data.config) { applyConfig(data.config); }
-                        buildSetOptions();
-                        var ls = document.getElementById('loadingScreen');
-                        ls.classList.remove('active');
-                        ls.style.display = 'none';
-
-                        if (data.config && data.config.exam_active === 'false') {
-                            examClosedAfterLoad = true;
-                            document.getElementById('examClosedScreen').style.display = 'block';
-                        } else {
-                            questionsReady = true;
-                            showSignInScreen();
-                        }
-                    } else {
-                        showLoadError('Failed to load exam questions. Please refresh or contact your teacher.');
-                    }
-                })
-                .catch(function () {
-                    showLoadError('Could not connect to the server. Check your internet connection and refresh.');
-                });
+            loadQuestions(0);
         });
+
+        // Apps Script occasionally answers with an HTML error page (or times out) when a whole
+        // class loads at once. Retry with backoff before telling the student anything.
+        var LOAD_RETRY_DELAYS = [1500, 3000, 6000, 10000];
+
+        function fetchQuestionsJson() {
+            return fetch(appsScriptUrl + '?action=questions').then(function (r) {
+                return r.text().then(function (t) {
+                    try { return JSON.parse(t); }
+                    catch (e) { throw new Error('non-JSON response (HTTP ' + r.status + ')'); }
+                });
+            });
+        }
+
+        function loadQuestions(attempt) {
+            fetchQuestionsJson().then(function (data) {
+                if (!(data.success && data.questions)) { throw new Error('bad payload'); }
+                onQuestionsLoaded(data);
+            }).catch(function (err) {
+                console.warn('Load attempt ' + (attempt + 1) + ' failed:', err);
+                if (attempt < LOAD_RETRY_DELAYS.length) {
+                    var ls = document.getElementById('loadingScreen');
+                    var note = ls.querySelector('.retry-note');
+                    if (note) { note.textContent = 'Server is busy, retrying (' + (attempt + 1) + '/' + LOAD_RETRY_DELAYS.length + ')…'; }
+                    setTimeout(function () { loadQuestions(attempt + 1); }, LOAD_RETRY_DELAYS[attempt]);
+                } else {
+                    showLoadError('Could not load the exam. The server may be busy or your connection is unstable.' +
+                        '<br><br><button type="button" class="btn-primary" onclick="location.reload()">Try again</button>');
+                }
+            });
+        }
+
+        function onQuestionsLoaded(data) {
+            questions = data.questions;
+            if (data.config) { applyConfig(data.config); }
+            buildSetOptions();
+            var ls = document.getElementById('loadingScreen');
+            ls.classList.remove('active');
+            ls.style.display = 'none';
+
+            if (data.config && data.config.exam_active === 'false') {
+                examClosedAfterLoad = true;
+                document.getElementById('examClosedScreen').style.display = 'block';
+            } else {
+                questionsReady = true;
+                showSignInScreen();
+            }
+        }
 
         function buildSetOptions() {
             var container = document.getElementById('setOptionsContainer');

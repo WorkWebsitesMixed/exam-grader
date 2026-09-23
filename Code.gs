@@ -262,9 +262,19 @@ function doGet(e) {
 // ============================================================
 // GET: QUESTIONS + CONFIG
 // ============================================================
-function getQuestionsResponse() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+// Reads Config + Questions, cached briefly so a whole class opening the exam at once
+// doesn't each trigger two full sheet reads (slow + hits Apps Script concurrency limits).
+// Per-request shuffling still happens after this, so randomization is unaffected.
+// Admin edits can take up to EXAM_CACHE_SECONDS to reach students.
+var EXAM_CACHE_SECONDS = 30;
+function readExamSheetsCached_() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var hit = cache.get('exam_sheets_v1');
+    if (hit) { return JSON.parse(hit); }
+  } catch (e) {}
 
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   var configSheet = ss.getSheetByName(CONFIG_SHEET);
   if (!configSheet) { configSheet = createConfigSheet(ss); }
   var configRows = configSheet.getDataRange().getValues();
@@ -274,10 +284,22 @@ function getQuestionsResponse() {
     var v = String(configRows[i][1]).trim();
     if (k) { config[k] = v; }
   }
-
   var qSheet = ss.getSheetByName(QUESTIONS_SHEET);
   if (!qSheet) { qSheet = createQuestionsSheet(ss); }
   var qRows = qSheet.getDataRange().getValues();
+
+  var out = {config: config, qRows: qRows};
+  try {
+    var json = JSON.stringify(out);
+    if (json.length < 90000) { cache.put('exam_sheets_v1', json, EXAM_CACHE_SECONDS); }  // 100KB/key limit
+  } catch (e) {}
+  return out;
+}
+
+function getQuestionsResponse() {
+  var src = readExamSheetsCached_();
+  var config = src.config;
+  var qRows  = src.qRows;
 
   var questions = {A: [], B: [], C: []};
 
