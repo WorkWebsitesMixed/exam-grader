@@ -1,8 +1,8 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-08-10 (end of session 9 — cutover cleanup, admin UX Tier 2 batches 1-2, deployed)_
+_Last updated: 2026-09-27 (session 10 — computer-room load failure, mid-investigation)_
 
-**→ Start at [§8 NEXT STEPS](#8-next-steps-start-here--as-of-2026-08-10-end-of-session-9).**
+**→ Start at [§9 NEXT STEPS](#9-next-steps-start-here--as-of-2026-09-27-session-10-in-progress).**
 
 ---
 
@@ -346,7 +346,7 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 
 ---
 
-## 8. NEXT STEPS (start here — as of 2026-08-10, end of session 9)
+## 8. Session 9 wrap-up (superseded — see §9 for the current entry point)
 
 **Status: v2 is live and proven.** Backend at `@10`, frontend on `main` via Pages, full student flow verified end-to-end.
 
@@ -394,3 +394,52 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 ### Decisions still open
 - **Sell to the school or not.** Unresolved, and it changes priorities: it moves Tier 3 visual work up, and makes ownership of the master template, frontend repo and OAuth client urgent (see *Accounts* — the OAuth client is on the work account, everything else on the personal one).
 - **Email sender account** — stays personal for now; see §Email sender for why moving to Workspace is risky.
+
+---
+
+## 9. NEXT STEPS (start here — as of 2026-09-27, session 10, IN PROGRESS)
+
+**Live incident, unresolved.** Andrés opened the exam on 26 computers at once in a school computer lab (via Veyon) and every student in that one course got: `Error — Could not connect to the server. Check your internet connection and refresh.`
+
+### What was shipped this session (deployed, backend `@11`, frontend on `main`)
+
+Two changes went out **before** the root cause was confirmed, on the reasonable-but-incomplete theory that this was Apps Script struggling under simultaneous load:
+
+1. **`grader.html`** — `?action=questions` load now retries up to 4× with backoff (1.5s/3s/6s/10s), shows "Server is busy, retrying (n/4)…", and only shows the final error (with a "Try again" button) after all 4 attempts fail. Non-JSON responses are caught explicitly (`fetchQuestionsJson()`) instead of falling into the generic catch.
+2. **`Code.gs`** — `getQuestionsResponse()` now reads Config + Questions through a new `readExamSheetsCached_()` helper, cached 30s via `CacheService.getScriptCache()` (key `exam_sheets_v1`, skipped if payload ≥90KB). Per-request shuffling/sampling still happens after the cache read, so randomization is unaffected. **Side effect to remember:** an admin edit to a question or a Config value can now take up to 30s to reach students, where before it was instant.
+
+Ad-hoc curl checks against the live `/exec?action=questions` (both before and after this deploy) showed real variance — some requests ~1-3s, some 26-44s, one outright 404 — confirming the backend genuinely struggles under concurrent load. **But this is not what's hitting Andrés's class** (see below), so the retry/cache changes are a real robustness improvement but did not fix the reported bug.
+
+### Root cause — narrowed, not yet confirmed
+
+Andrés retried on **3 different computers, more than 10 minutes apart** (i.e. not a simultaneous-burst scenario), and got the same failure every time, even after the retry logic was live (Chrome DevTools console showed all 4 retry attempts failing). Console evidence (screenshot, 2026-09-23):
+
+```
+Failed to load resource: net::ERR_FAILED   script.google.com/ma…?action=questions
+Load attempt N failed: TypeError: Failed to fetch   (at fetchQuestionsJson)
+Access to fetch at 'https://script.google.com/macros/s/AKfycbye…/exec?action=questions'
+  from origin 'https://workwebsitesmixed.github.io' has been blocked by CORS policy:
+  No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+This is a different failure mode than "Apps Script is slow": the browser never received a body to parse — the request itself failed (`net::ERR_FAILED`), and the CORS message is the browser's generic description of *any* failed cross-origin fetch, not proof of an actual missing-CORS-header response from Google. Backend code always sends `success:true/false` JSON with no CORS restriction, and curl from this machine gets clean 200 JSON every time (see 2026-09-23 checks above in git history of this file / conversation). That combination — fails consistently from that lab's computers/network, works fine from elsewhere, "blocked by CORS" on what should be a plain fetch — points at the **school network/computer-lab environment**, not the Apps Script backend:
+- A school firewall/content filter blocking or interfering with `script.google.com` / `script.googleusercontent.com` (most likely — explains "every computer in that lab, every time, still failing 10+ min later").
+- Less likely: Google rate-limiting that lab's shared public IP after the 26-at-once burst (would expect this to clear well within 10 minutes).
+- Also possible but unconfirmed: something specific to that lab's browser/proxy/Veyon image (extension, forced proxy, MITM cert) rather than the network edge itself.
+
+### Diagnostic steps requested, **not yet answered by Andrés**
+
+1. On one of the affected lab computers, open directly in a new tab:
+   `https://script.google.com/macros/s/AKfycbyeQbG1xIFVgK6XNeZ1iECYOBll4rv4zrICDPMcj2xGQwhUNvPhkGJN-gAWD4D5M9KeDQ/exec?action=questions`
+   — does it return raw JSON, or an error/block page (and which one)?
+2. On the same computer, tether to a phone hotspot and reload the exam — does it work? (Isolates "school network" vs. "that computer/browser".)
+3. Do Andrés's other courses, on the same lab network, load the exam fine? (Isolates "this lab" vs. "the whole school network".)
+
+### Next actions (in order)
+
+1. [ ] **Get answers to the 3 diagnostic steps above** — nothing else should be attempted until this narrows network vs. Google-throttling vs. local-machine.
+2. [ ] **If it's a school network/filter block:** this is not fixable from the codebase. Options: ask school IT to allowlist `script.google.com` and `script.googleusercontent.com`; or have Andrés run the exam from a network that isn't filtered (e.g. mobile hotspot) for that lab.
+3. [ ] **If it's Google throttling the lab's shared IP:** consider adding jitter to the initial page load (spread the 26 simultaneous requests over a few seconds) — not yet built, low priority until diagnostics rule the network theory in or out.
+4. [ ] **If it's something lab-specific (proxy/extension/Veyon image):** would need IT/Andrés to inspect that machine image directly; nothing to do from this repo.
+5. [ ] Once resolved, **decide whether to keep the 30s sheet-read cache** — it's a genuine improvement for concurrent-load robustness independent of this incident, but the "admin edits take ≤30s to land" tradeoff should be a conscious keep, not an accident.
+6. [ ] Carry forward all unresolved items from §8 below (admin password rotation, old v1 spreadsheet lockdown, Tier 2 batches 1-2 still not browser-verified, real IGCSE paper build, Phase 5) — none of that changed this session.
