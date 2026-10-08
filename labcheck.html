@@ -35,7 +35,18 @@
     (2) the same PC on a phone hotspot, (3) a PC in a different course on the
     same school network.
 
-  The page sends no student data and calls only read-only addresses.
+  BURST MODE (all lab PCs at once): add &run=<tag> to the address, e.g. &run=lab1,
+  and open it on every PC at the same moment (e.g. with Veyon). When the probes
+  finish, each PC POSTs its structured result to <worker>/report. Read the
+  aggregate afterwards at <worker>/reports?run=lab1 -- one summary instead of
+  26 copy-pasted reports. If the worker is unreachable from that PC, the manual
+  "Copy report" text still works.
+
+  Verdict FLAKY = some tries passed and some failed (e.g. 1/3 ok). A plain
+  "OK" never hides partial failures.
+
+  The page sends no student data and calls only read-only addresses; the
+  only write is the probe result (user agent + verdicts) to the test Worker.
 -->
 <html lang="en">
 <head>
@@ -46,7 +57,7 @@
   body { font-family: system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #0F172A; }
   table { border-collapse: collapse; width: 100%; margin: 16px 0; }
   th, td { border: 1px solid #CBD5E1; padding: 6px 8px; text-align: left; font-size: 14px; vertical-align: top; }
-  .OK { background: #DCFCE7; } .NOCORS { background: #FEF9C3; } .UNREACHABLE { background: #FEE2E2; } .SKIPPED { background: #F1F5F9; }
+  .OK { background: #DCFCE7; } .FLAKY { background: #FFEDD5; } .NOCORS { background: #FEF9C3; } .UNREACHABLE { background: #FEE2E2; } .SKIPPED { background: #F1F5F9; }
   textarea { width: 100%; height: 220px; font-family: monospace; font-size: 12px; }
   button { padding: 8px 14px; font-size: 15px; cursor: pointer; }
 </style>
@@ -73,6 +84,7 @@ var TIMEOUT_MS = 15000; // give up on one attempt after 15 s (a hung connection 
 var params = new URLSearchParams(location.search);
 var SRC = (params.get('src') || '').replace(/\/$/, '');       // Apps Script /exec URL
 var WORKER = (params.get('worker') || '').replace(/\/$/, ''); // test Worker base URL
+var RUN = params.get('run') || 'default';                      // groups one burst of PCs in /reports
 
 // Each probe: a label, the URL, and whether a normal (CORS) fetch is meaningful.
 // corsOk=false means the target never sends CORS headers for us (it is not an
@@ -132,17 +144,23 @@ function summarize(list) {
   return text;
 }
 
-// The decision table described in the header comment.
+// The decision table described in the header comment, now with FLAKY so a
+// partly failing address is never shown as plain OK.
 function verdict(corsList, noCorsList, corsOk) {
-  var corsPass = corsList && corsList.some(function (r) { return r.ok; });
-  var noCorsPass = noCorsList && noCorsList.some(function (r) { return r.ok; });
-  if (corsOk && corsPass) { return 'OK'; }
-  if (!corsOk && noCorsPass) { return 'OK'; }          // reachable is all we can ask of these
-  if (noCorsPass) { return 'NOCORS'; }
+  function count(list) { return list ? list.filter(function (r) { return r.ok; }).length : 0; }
+  var corsPass = count(corsList), noCorsPass = count(noCorsList);
+  // Which list decides: addresses that are APIs for our page use the normal
+  // fetch; the others (Google hosts) can only be judged by no-cors reachability.
+  var main = corsOk ? corsPass : noCorsPass;
+  var total = corsOk ? (corsList ? corsList.length : 0) : (noCorsList ? noCorsList.length : 0);
+  if (main === total && total > 0) { return 'OK'; }
+  if (main > 0) { return 'FLAKY'; }
+  if (noCorsPass > 0) { return 'NOCORS'; }
   return 'UNREACHABLE';
 }
 
 var report = [];
+var structured = [];  // machine-readable copy of the same results, sent to /report
 function runProbe(p) {
   var row = document.createElement('tr');
   if (!p.url) {
@@ -151,6 +169,7 @@ function runProbe(p) {
     row.cells[0].textContent = p.name;
     document.getElementById('rows').appendChild(row);
     report.push('[SKIPPED] ' + p.name);
+    structured.push({ name: p.name, verdict: 'SKIPPED', cors: [], noCors: [] });
     return Promise.resolve();
   }
   // Same-origin control and CORS-capable APIs get both modes; others only no-cors.
@@ -167,6 +186,7 @@ function runProbe(p) {
       var a = document.createElement('a'); a.href = p.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'open in new tab';
       row.cells[4].appendChild(a);
       document.getElementById('rows').appendChild(row);
+      structured.push({ name: p.name, verdict: v, cors: corsList || [], noCors: noCorsList });
       report.push('[' + v + '] ' + p.name + '\n    url: ' + p.url + '\n    normal: ' + (p.corsOk ? summarize(corsList) : 'n/a') + '\n    no-cors: ' + summarize(noCorsList));
     });
   });
@@ -185,7 +205,26 @@ Promise.all(PROBES.map(runProbe)).then(function () {
   document.getElementById('report').value = header.concat(report).join('\n');
   document.getElementById('status').textContent = 'Done. Click "Copy report" and paste it into the chat.';
   document.getElementById('copy').disabled = false;
+  sendReport();
 });
+
+// Posts the structured result to the test Worker so a whole lab can be read as
+// one summary. text/plain keeps it a "simple" request (no CORS preflight).
+// Failure is shown on the page but never blocks the manual copy path.
+function sendReport() {
+  if (!WORKER) { return; }
+  var status = document.getElementById('status');
+  fetch(WORKER + '/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ run: RUN, userAgent: navigator.userAgent, results: structured })
+  }).then(function (r) {
+    status.textContent += r.ok ? ' Result also sent to the test Worker (run "' + RUN + '").'
+                               : ' Could not send result to the Worker (HTTP ' + r.status + '); copy it manually.';
+  }).catch(function (err) {
+    status.textContent += ' Could not reach the Worker to send the result (' + err.message + '); copy it manually.';
+  });
+}
 
 // Copy button; falls back to selecting the text if the clipboard API is blocked
 // (some locked-down lab images disable it).
