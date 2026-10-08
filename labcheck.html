@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<!--
+  labcheck.html -- network reachability check, meant to be opened ON the school
+  lab computers.
+
+  Role in the project: Check 2 of the migration plan. The unresolved incident in
+  handoff.md section 9 is that the exam page loads from github.io but the
+  request to script.google.com fails ("net::ERR_FAILED", reported by Chrome as a
+  CORS error). This page probes each address the exam needs and tells the two
+  main hypotheses apart as far as a browser can:
+
+    * UNREACHABLE  : both the normal fetch and the no-cors fetch fail
+                     -> the connection itself is blocked (DNS/firewall/filter) or times out.
+    * NO CORS      : the normal fetch fails but the no-cors fetch succeeds
+                     -> something answered, but without CORS headers. That is
+                        either Google/Apps Script returning an error page under
+                        overload OR a filter serving its own block page. A browser
+                        cannot tell these apart: use the "open in new tab" link
+                        and read what the page says.
+    * OK           : the normal fetch succeeded.
+
+  Why two fetch modes: a normal cross-origin fetch fails with the SAME generic
+  "Failed to fetch" for a blocked network and for a missing CORS header. A
+  no-cors fetch returns an opaque response whenever the server answered at all,
+  so comparing the two separates "nobody answered" from "someone answered
+  without CORS headers".
+
+  How to use (from the lab computer):
+    1. Copy this file to the repo root temporarily so GitHub Pages serves it
+       from the SAME origin as the real exam, then delete it afterwards.
+    2. Open: https://workwebsitesmixed.github.io/exam-grader/labcheck.html
+             ?src=<apps script /exec url>&worker=<test worker base url>
+    3. Click "Copy report" and paste the text back into the chat.
+    Run it three times, mapping to handoff.md section 9: (1) a lab PC,
+    (2) the same PC on a phone hotspot, (3) a PC in a different course on the
+    same school network.
+
+  The page sends no student data and calls only read-only addresses.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab network check</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #0F172A; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #CBD5E1; padding: 6px 8px; text-align: left; font-size: 14px; vertical-align: top; }
+  .OK { background: #DCFCE7; } .NOCORS { background: #FEF9C3; } .UNREACHABLE { background: #FEE2E2; } .SKIPPED { background: #F1F5F9; }
+  textarea { width: 100%; height: 220px; font-family: monospace; font-size: 12px; }
+  button { padding: 8px 14px; font-size: 15px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Lab network check</h1>
+<p id="status">Running probes...</p>
+<table>
+  <thead><tr><th>Probe</th><th>Verdict</th><th>Normal fetch</th><th>No-cors fetch</th><th>Open</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<button id="copy" disabled>Copy report</button>
+<p><textarea id="report" readonly></textarea></p>
+
+<script>
+// ---------------------------------------------------------------------------
+// CONFIGURATION -- the values the plan specified.
+// ---------------------------------------------------------------------------
+var TRIES = 3;          // attempts per probe and mode
+var TRY_GAP_MS = 2000;  // pause between attempts, so a transient blip is visible as such
+var TIMEOUT_MS = 15000; // give up on one attempt after 15 s (a hung connection is a result too)
+
+// Optional inputs come from the query string, like the real frontend's ?src=.
+var params = new URLSearchParams(location.search);
+var SRC = (params.get('src') || '').replace(/\/$/, '');       // Apps Script /exec URL
+var WORKER = (params.get('worker') || '').replace(/\/$/, ''); // test Worker base URL
+
+// Each probe: a label, the URL, and whether a normal (CORS) fetch is meaningful.
+// corsOk=false means the target never sends CORS headers for us (it is not an
+// API for our page), so only the no-cors fetch can say whether it is reachable.
+var PROBES = [
+  { name: 'Control: this page (same origin)', url: location.pathname + location.search, corsOk: true },
+  { name: 'Apps Script questions (the failing one)', url: SRC ? SRC + '?action=questions' : '', corsOk: true },
+  { name: 'Test Worker /exam (*.workers.dev)', url: WORKER ? WORKER + '/exam' : '', corsOk: true },
+  { name: 'Google Sign-In script (accounts.google.com)', url: 'https://accounts.google.com/gsi/client', corsOk: false },
+  { name: 'Drive (question images)', url: 'https://drive.google.com/', corsOk: false },
+  { name: 'Google image host (lh3.googleusercontent.com)', url: 'https://lh3.googleusercontent.com/', corsOk: false },
+  { name: 'Apps Script redirect host (script.googleusercontent.com)', url: 'https://script.googleusercontent.com/', corsOk: false }
+];
+
+// ---------------------------------------------------------------------------
+// One timed fetch attempt. Always resolves to a plain result object so the
+// caller never needs try/catch.
+// ---------------------------------------------------------------------------
+function attempt(url, mode) {
+  var controller = new AbortController();
+  var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
+  var t0 = performance.now();
+  return fetch(url, { mode: mode, cache: 'no-store', signal: controller.signal })
+    .then(function (resp) {
+      clearTimeout(timer);
+      // no-cors gives an opaque response (status 0); that still means "someone answered".
+      return { ok: true, status: resp.status, ms: Math.round(performance.now() - t0) };
+    })
+    .catch(function (err) {
+      clearTimeout(timer);
+      return { ok: false, error: err.name === 'AbortError' ? 'timeout ' + TIMEOUT_MS + 'ms' : err.name + ': ' + err.message,
+               ms: Math.round(performance.now() - t0) };
+    });
+}
+
+// Runs TRIES attempts one after another with a pause between them.
+function attemptsFor(url, mode) {
+  var out = [];
+  var chain = Promise.resolve();
+  for (var i = 0; i < TRIES; i++) {
+    chain = chain.then(function () {
+      return attempt(url, mode).then(function (r) { out.push(r); })
+        .then(function () { return new Promise(function (res) { setTimeout(res, TRY_GAP_MS); }); });
+    });
+  }
+  return chain.then(function () { return out; });
+}
+
+// "3/3 ok (212,180,205 ms)" or "0/3 ok [Failed to fetch; timeout 15000ms; ...]"
+function summarize(list) {
+  if (!list) { return 'not run'; }
+  var oks = list.filter(function (r) { return r.ok; });
+  var text = oks.length + '/' + list.length + ' ok';
+  if (oks.length) { text += ' (' + oks.map(function (r) { return r.ms; }).join(',') + ' ms)'; }
+  var errs = list.filter(function (r) { return !r.ok; }).map(function (r) { return r.error; });
+  if (errs.length) { text += ' [' + errs.join('; ') + ']'; }
+  return text;
+}
+
+// The decision table described in the header comment.
+function verdict(corsList, noCorsList, corsOk) {
+  var corsPass = corsList && corsList.some(function (r) { return r.ok; });
+  var noCorsPass = noCorsList && noCorsList.some(function (r) { return r.ok; });
+  if (corsOk && corsPass) { return 'OK'; }
+  if (!corsOk && noCorsPass) { return 'OK'; }          // reachable is all we can ask of these
+  if (noCorsPass) { return 'NOCORS'; }
+  return 'UNREACHABLE';
+}
+
+var report = [];
+function runProbe(p) {
+  var row = document.createElement('tr');
+  if (!p.url) {
+    row.className = 'SKIPPED';
+    row.innerHTML = '<td></td><td>SKIPPED</td><td colspan="3">no URL given (add ?src= / &worker= to the page address)</td>';
+    row.cells[0].textContent = p.name;
+    document.getElementById('rows').appendChild(row);
+    report.push('[SKIPPED] ' + p.name);
+    return Promise.resolve();
+  }
+  // Same-origin control and CORS-capable APIs get both modes; others only no-cors.
+  var corsPromise = p.corsOk ? attemptsFor(p.url, 'cors') : Promise.resolve(null);
+  return corsPromise.then(function (corsList) {
+    return attemptsFor(p.url, 'no-cors').then(function (noCorsList) {
+      var v = verdict(corsList, noCorsList, p.corsOk);
+      row.className = v;
+      row.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
+      row.cells[0].textContent = p.name;
+      row.cells[1].textContent = v;
+      row.cells[2].textContent = p.corsOk ? summarize(corsList) : 'n/a';
+      row.cells[3].textContent = summarize(noCorsList);
+      var a = document.createElement('a'); a.href = p.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'open in new tab';
+      row.cells[4].appendChild(a);
+      document.getElementById('rows').appendChild(row);
+      report.push('[' + v + '] ' + p.name + '\n    url: ' + p.url + '\n    normal: ' + (p.corsOk ? summarize(corsList) : 'n/a') + '\n    no-cors: ' + summarize(noCorsList));
+    });
+  });
+}
+
+// Probes run in parallel with each other (each probe's own attempts stay sequential).
+Promise.all(PROBES.map(runProbe)).then(function () {
+  var header = [
+    'Lab check ' + new Date().toISOString(),
+    'page: ' + location.href,
+    'userAgent: ' + navigator.userAgent,
+    'onLine: ' + navigator.onLine,
+    'connection: ' + (navigator.connection ? navigator.connection.effectiveType : 'n/a'),
+    ''
+  ];
+  document.getElementById('report').value = header.concat(report).join('\n');
+  document.getElementById('status').textContent = 'Done. Click "Copy report" and paste it into the chat.';
+  document.getElementById('copy').disabled = false;
+});
+
+// Copy button; falls back to selecting the text if the clipboard API is blocked
+// (some locked-down lab images disable it).
+document.getElementById('copy').addEventListener('click', function () {
+  var ta = document.getElementById('report');
+  ta.select();
+  if (navigator.clipboard) { navigator.clipboard.writeText(ta.value).catch(function () { document.execCommand('copy'); }); }
+  else { document.execCommand('copy'); }
+});
+</script>
+</body>
+</html>
