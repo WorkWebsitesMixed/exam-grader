@@ -1,8 +1,8 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-09-27 (session 10 — computer-room load failure, mid-investigation)_
+_Last updated: 2026-10-08 (session 11 — decision to migrate the backend to Cloudflare; load and lab-network checks done)_
 
-**→ Start at [§9 NEXT STEPS](#9-next-steps-start-here--as-of-2026-09-27-session-10-in-progress).**
+**→ Start at [§10 Cloudflare migration](#10-cloudflare-migration-start-here--as-of-2026-10-08-session-11).** §9 (the lab incident) is kept for history; §10 records what the checks found.
 
 ---
 
@@ -443,3 +443,69 @@ This is a different failure mode than "Apps Script is slow": the browser never r
 4. [ ] **If it's something lab-specific (proxy/extension/Veyon image):** would need IT/Andrés to inspect that machine image directly; nothing to do from this repo.
 5. [ ] Once resolved, **decide whether to keep the 30s sheet-read cache** — it's a genuine improvement for concurrent-load robustness independent of this incident, but the "admin edits take ≤30s to land" tradeoff should be a conscious keep, not an accident.
 6. [ ] Carry forward all unresolved items from §8 below (admin password rotation, old v1 spreadsheet lockdown, Tier 2 batches 1-2 still not browser-verified, real IGCSE paper build, Phase 5) — none of that changed this session.
+
+---
+
+## 10. Cloudflare migration (START HERE — as of 2026-10-08, session 11)
+
+### Status
+Andrés decided to migrate the backend from Apps Script to **Cloudflare Workers + D1 + Queues** (free plan). Target: 60 simultaneous exam starts must work (25 is normal); grading may be slow, access may not. Frontend stays on GitHub Pages (`?src=` points at the backend). **No rewrite has started.** Only throwaway test tooling exists, in `tools/loadtest/` (untracked in git; see Key files). Production (Apps Script `@11`, Pages) is untouched except one temporary file (`labcheck.html`, see Blocked).
+
+### What the checks found
+- **Load test (deployed test Worker):** 205/205 requests returned 200. 120 simultaneous `POST /start` (D1 insert): p95 959 ms; 60 simultaneous: p95 542 ms; `GET /exam` p95 ≤ 268 ms. Not measured: CPU time (free plan allows 10 ms/request) — read it in the dashboard (Workers & Pages > examgrader-loadtest > Metrics).
+- **Lab network (run `lab1`, 19 of 26 PCs, Windows Chrome/Edge; 7 PCs would not wake remotely):** 0 failures in 57 tries on every address, including `workers.dev` and Apps Script (p50 1.1 s, p95 2.8 s, max 3.6 s). The school network does not block Google, Drive, or `workers.dev` in this lab. The 2026-09-23 failure did **not** reproduce, so its cause is still unknown (unverified guesses: transient Apps Script overload, or the heavier real exam path with `checkDuplicate` + token verification). The burst was only partly simultaneous (reports spread over 49 s) and only requested `?action=questions`.
+- **Single-user Apps Script runs earlier the same day:** one Windows PC got 2 timeouts of 15 s out of 3 tries (`?action=questions`).
+- **Security gaps found in current `Code.gs`** (the old handoff treated them as done; the new backend must make them real):
+  1. `@marymount.edu.co` is not validated server-side: `verifyGoogleToken` (Code.gs:213) checks only `aud`; with no `idToken` the server uses the client's email (Code.gs:781-793); the sheet row stores `data.email` (Code.gs:906), not the verified one.
+  2. Total max score is computed from the answers the student sends (Code.gs:890-892): omitting hard questions raises the percentage.
+  3. One-attempt guard is read-then-append with no lock (race).
+  4. Google's docs say tokeninfo is for debugging, not production.
+  5. `GRADING_MODEL = 'claude-sonnet-4-6'`: Anthropic's rate-limits page marks Sonnet 4.x deprecated (the model-deprecations page was not checked).
+
+### Decisions made (and why)
+- Migrate to Cloudflare Workers + D1 — Apps Script caps 30 simultaneous executions per user (Google quotas page) and was measured at 26–44 s per request under load.
+- **Admin panel is rewritten directly on the Worker**; Google Sheets become export/backup only — Andrés's choice.
+- **Results email stays only as a backup relay through Apps Script `MailApp`** — Cloudflare Email Sending is "Not available" on Workers Free; Resend free is 100/day (3,000/month) and was not checked for a domain requirement.
+- **A reload mid-exam resumes the same attempt** (attempt row created at `/start`, UNIQUE(exam, email, set)); the submit is authenticated by attempt id, not by the Google token (which expires).
+- **Grading model moves to `claude-sonnet-5-5`** in the rewrite (not changed in the current `Code.gs`).
+- **Grading:** one Cloudflare Queue message per submission, status column in D1, cron sweep to re-enqueue stuck rows (free-plan queue retention is fixed at 24 h; consumer wall time 15 min, CPU 30 s by default).
+- **D1 is the single store; KV is not used** (needs the UNIQUE guard; KV free writes are 1,000/day).
+- Questions served as a cacheable `GET /exam` (no `correctIndex`, no rubric); in standard mode, sampling and option order are assigned in `/start` and stored with the attempt; the server grades against the stored list, not what the client sends.
+- **Images move off Google Drive** (`drive.google.com/thumbnail` is an undocumented endpoint; one past incident of images not loading in some exams, cause unproven). Content-hash URLs `/img/<hash>` with a year of cache, plus retry on `<img>` error in `grader.html`.
+- Cutover: old and new backends run side by side by handing out different `?src=` links per class; rollback = give the old link.
+
+### Next steps (in order)
+1. Get Andrés's answers to the four open questions below.
+2. Write the D1 schema (`exams`, `questions`, `images`, `attempts`, `teachers`) and the endpoint spec as files on branch `cloudflare-migration`, for review. Do not rewrite the backend before he approves.
+3. Test before relying on it: CPU cost of RS256 Google token verification on the free plan; whether D1 `batch()` counts each statement toward the 50 queries/invocation limit (design with ≤ 5 queries per invocation meanwhile); whether the large-PDF tools (extractQuestions, generateRubrics) fit in 10 ms or must run as queue jobs.
+4. ~~Check whether enabling R2 requires a payment method~~ **Confirmed 2026-10-10 (Andrés's screenshot of the activation screen): it does.** Free tier shown: 10 GB-month, 1 M Class A, 10 M Class B; overage $0.015/GB-month, $4.50/M Class A, $0.36/M Class B. Andrés is willing to use a low-balance virtual card; he has not activated it yet (unverified).
+5. Remove the temporary test infrastructure when finished (see Gotchas).
+6. Carry forward from §8–§9: admin password rotation, locking the old v1 spreadsheet, browser-verifying Tier 2 admin batches, building a real IGCSE paper, Phase 5.
+
+### Blocked / waiting on the user
+- **Update 2026-10-10:** (a) answered — Google sign-in with a teachers allowlist, seeded with `andres.forero@marymount.edu.co` and `felipe.velasquez@marymount.edu.co`, more teachers only when it scales; (b) answered — R2, activated by Andrés (no bucket created yet; he may add a budget alert in the R2 billing panel). Still open: (c) autosave and (d) history migration.
+- **Four open questions (original wording):** (a) admin access: Google sign-in with a teacher email allowlist (recommended; today there is no login throttling and the password is plaintext) vs shared password; (b) images: R2 (10 GB/month, 1 M Class A, 10 M Class B, free egress) vs D1 BLOB (2 MB per row); (c) server-side autosave of answers every ~30 s (about 7,000 D1 writes per 60-student session vs 100,000/day cap); (d) migrate existing submissions into D1 or keep them in the sheet as archive.
+- **`labcheck.html` is committed on `main`** (commit `f786639`, "Add temporary lab check page"; a later update with the report-to-Worker code was meant to be committed too — unverified which commit). Andrés must remove it from `main` when the lab tests end.
+- 7 lab PCs could not be tested (remote wake-up failed).
+
+### Key files and commands
+- `tools/loadtest/worker/src/index.js` — test Worker: `GET /exam`, `POST /start`, `GET /ping`, `POST /report`, `GET /reports?run=<tag>`.
+- `tools/loadtest/worker/{wrangler.toml,schema.sql,package.json}` — config (D1 binding `DB`), tables `attempts` and `lab_reports`, wrangler 4.148.0 installed locally.
+- `tools/loadtest/loadtest.mjs` — burst script. `node loadtest.mjs --url https://examgrader-loadtest.marymount-exams.workers.dev --waves 25,60,120 --gap 15`; optional `--baseline <apps script /exec>` (loads production; run outside class).
+- `tools/loadtest/labcheck.html` — lab network probe (copy to repo root to publish). Burst mode: `...labcheck.html?run=<tag>&src=<exec url>&worker=<worker url>`; read the aggregate at `<worker>/reports?run=<tag>`. Verdicts: OK, FLAKY, NOCORS (answered without CORS: Apps Script error page OR a filter's block page; the browser cannot tell), UNREACHABLE.
+- `tools/loadtest/README.md` — setup and cleanup steps.
+- Cloudflare account: `anfforerobe@gmail.com`, account id `86e7f13a45d21c1249dfcf06dc457770`, workers.dev subdomain `marymount-exams` (renamed in the dashboard), Worker `https://examgrader-loadtest.marymount-exams.workers.dev`, D1 `examgrader-loadtest` id `f87eb99e-49f2-4e2e-8403-53cf59c67558` (region ENAM). Test data in run tag `selftest` is a fake report.
+- Git: branch `cloudflare-migration` exists (created from `main`, no commits); Andrés is currently on `main` with `tools/` untracked.
+
+### Gotchas
+- The workers.dev account subdomain cannot be changed through the API with the wrangler OAuth token (PUT creates only; PATCH rejected). Change it in the dashboard; changing it breaks every URL already handed out.
+- `wrangler deploy` auto-registered the subdomain as `examgrader-loadtest` the first time; a new Worker URL takes a few minutes to resolve (about 3 minutes observed).
+- A D1 table with a `TEXT PRIMARY KEY` plus a UNIQUE constraint costs 3 rows written per insert (two indexes), not 2. The pricing page says every index adds a written row.
+- GitHub Pages takes 1–2 minutes to publish a push; a 404 right after pushing is normal.
+- `pkill -f "wrangler dev"` inside a Bash command kills the command's own shell (the pattern matches itself).
+- The wrangler login token is stored at `~/.config/.wrangler/config/default.toml`.
+- Cloudflare free limits used (all from official pages, fetched 2026-10-08): Workers 100,000 requests/day, 10 ms CPU, 50 subrequests; D1 5 M rows read/day, 100,000 rows written/day, 500 MB per database, 50 queries/invocation; Queues 10,000 operations/day; KV 1,000 writes/day; Apps Script 30 simultaneous executions/user, 100 emails/day (consumer); Anthropic Sonnet 5.5 Start tier 1,000 RPM, 2 M ITPM, 400 k OTPM (new organizations may start on a lower Evaluation tier). Sources: developers.cloudflare.com/{workers/platform/limits,d1/platform/pricing,d1/platform/limits,queues/platform/limits,kv/platform/limits,r2/pricing,email-service/platform/pricing}, developers.google.com/apps-script/guides/services/quotas, platform.claude.com/docs/en/api/rate-limits.
+- Cleanup of the throwaway infra: `npx wrangler delete` and `npx wrangler d1 delete examgrader-loadtest` from `tools/loadtest/worker`.
+
+### Log
+- 2026-10-08 — Read the code and verified the findings above; fetched official limits; built `tools/loadtest/`; created and deployed the test Worker and D1; load test passed; lab burst (19 PCs) showed no network block; decided to migrate; recorded decisions in the project memory.
