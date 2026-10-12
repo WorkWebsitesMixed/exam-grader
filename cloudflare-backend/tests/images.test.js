@@ -82,3 +82,14 @@ test('an unknown or malformed image path is a 404, and a question may reference 
   const served = exam.json.questions.A.find((x) => x.id === 'QIMG');
   assert.equal(served.imageUrl.endsWith('/img/' + up.json.hash), true);
 });
+
+test('CORS preflight allows the headers the admin page sends with an upload', async () => {
+  const { w } = await adminWorld();
+  const r = await w.app.fetch(new Request('https://api.test/api/admin/images', { method: 'OPTIONS', headers: {
+    Origin: ORIGIN, 'Access-Control-Request-Method': 'POST',
+    'Access-Control-Request-Headers': 'authorization,x-filename,content-type' } }), w.env);
+  assert.equal(r.status, 204);
+  const allowed = r.headers.get('Access-Control-Allow-Headers').toLowerCase();
+  for (const h of ['authorization', 'x-filename', 'content-type']) { assert.ok(allowed.includes(h), h); }
+  assert.equal(r.headers.get('Access-Control-Allow-Origin'), ORIGIN);
+});

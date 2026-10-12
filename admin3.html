@@ -12,14 +12,14 @@
       for an 8-hour session issued by the Worker, but only if the email is in
       the `teachers` table. The session is kept in sessionStorage (closing the
       tab signs out) and sent as `Authorization: Bearer <session>`.
-    - Views: Attempts (with the integrity columns), Questions (CRUD), Settings,
+    - Views: Attempts (with the integrity columns), Questions (CRUD, image upload, import
+    from PDF with marking-scheme reading), Settings,
       Tools (recalculate, regrade multiple choice, similarity report), Teachers.
     - Safety rule for this file: anything that comes from a student or from the
       database (names, answers, question text) is put on the page with
       textContent only, never innerHTML. That is what the `h()` builder does.
 
-  Not here yet (they need backend pieces that are not built): PDF import and
-  rubric generation, export.
+  Not here yet (they need backend pieces that are not built): export.
 -->
 <html lang="en">
 <head>
@@ -737,6 +737,7 @@
       h('div', { class: 'toolbar' }, setSelect,
         h('button', { class: 'btn', id: 'addQuestion', onclick: function () {
           mount(byId('view'), questionForm(null)); } }, 'Add question'),
+        h('button', { class: 'btn secondary', id: 'importPdf', onclick: function () { openImport(); } }, 'Import from PDF'),
         h('span', { class: 'muted' }, rows.length + ' question(s), ' + total + ' points')),
       h('div', { class: 'table-wrap' }, h('table', { id: 'questionsTable' },
         h('thead', null, h('tr', null, ['Set', 'Id', 'Section', 'Type', 'Pts', 'Question', 'Answer', ''].map(function (t) { return h('th', null, t); }))),
@@ -867,6 +868,314 @@
     showType();
     showImage();
     return form;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import from PDF
+  // ---------------------------------------------------------------------------
+  //
+  // Flow: question-paper PDF -> job (model reads it) -> review cards -> optional
+  // marking-scheme PDF fills correct answers / rubrics -> explicit import.
+  // Nothing is saved until the teacher presses "Import". The model can be wrong
+  // about a mark, an option or a correct letter, so every field stays editable.
+
+  var JOB_POLL_MS = 2000;
+  var JOB_MAX_POLLS = 150;           // about 5 minutes
+  var I = null;                      // import state: {set, questions[], images[], usage, existing{}}
+
+  /** Upload a PDF, start the job and resolve with its output when done. */
+  function runPdfJob(file, kind, items, onStatus) {
+    onStatus('Uploading ' + file.name + '...');
+    return api('POST', '/api/admin/jobs?kind=' + kind, file).then(function (d) {
+      onStatus('Reading the PDF (this can take a minute)...');
+      return api('POST', '/api/admin/jobs/' + d.jobId + '/run', items ? { items: items } : {}).then(function () {
+        return waitJob(d.jobId, 0);
+      });
+    });
+  }
+
+  function waitJob(jobId, polls) {
+    return new Promise(function (resolve, reject) {
+      function tick(n) {
+        api('GET', '/api/admin/jobs/' + jobId).then(function (d) {
+          if (d.status === 'done') { resolve(d.output); }
+          else if (d.status === 'error') { reject(new Error(d.error || 'The job failed')); }
+          else if (n >= JOB_MAX_POLLS) { reject(new Error('Timed out waiting for the PDF to be read.')); }
+          else { setTimeout(function () { tick(n + 1); }, JOB_POLL_MS); }
+        }).catch(reject);
+      }
+      tick(polls);
+    });
+  }
+
+  /** Main question number from a printed label: "11(b)(i)" -> 11. */
+  function mainNumber(label) {
+    var m = /^\D*(\d+)/.exec(String(label || ''));
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  /** Which uploaded figures could belong to this question (by "Q<n>" in the file name). */
+  function figureCandidates(q) {
+    var n = mainNumber(q.figure) || mainNumber(q.label);
+    if (!n || !q.figure) { return []; }          // only questions that mention a figure get a suggestion
+    return I.images.filter(function (im) {
+      var m = /(?:^|[^0-9A-Za-z])Q(\d+)(?!\d)/i.exec(im.name || '');
+      return m && parseInt(m[1], 10) === n;
+    });
+  }
+
+  /** Suggests figures and unique ids after (re)loading images or questions. */
+  function applySuggestions() {
+    I.questions.forEach(function (q) {
+      if (q.imageHash) { return; }
+      var c = figureCandidates(q);
+      q.imageChoices = c.length;                 // >1 means the teacher must choose
+      if (c.length === 1) { q.imageHash = c[0].hash; }
+    });
+  }
+
+  function uniqueId(base, taken) {
+    var id = base; var k = 2;
+    while (taken[id]) { id = base + '_' + k; k++; }
+    taken[id] = true;
+    return id;
+  }
+
+  function openImport() {
+    banner('');
+    var set = S.qSet || 'A';
+    var existing = {};
+    Promise.all([
+      api('GET', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions'),
+      api('GET', '/api/admin/images')
+    ]).then(function (r) {
+      r[0].questions.forEach(function (q) { existing[q.set + '/' + q.id] = true; });
+      I = { set: set, questions: [], images: r[1].images, usage: null, existing: existing, schemeNote: '' };
+      mount(byId('view'), importView());
+    }).catch(fail);
+  }
+
+  function importView() {
+    var status = h('div', { class: 'muted small', id: 'impStatus', style: 'margin-top:8px' });
+    var setSel = h('select', { id: 'impSet' }, ['A', 'B', 'C'].map(function (x) {
+      return h('option', { value: x, selected: x === I.set }, 'Set ' + x); }));
+    setSel.addEventListener('change', function () { I.set = setSel.value; renderReview(); });
+    var paper = h('input', { type: 'file', id: 'impPaper', accept: 'application/pdf' });
+    var figures = h('input', { type: 'file', id: 'impFigures', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true });
+    var scheme = h('input', { type: 'file', id: 'impScheme', accept: 'application/pdf' });
+    var figStatus = h('div', { class: 'muted small', id: 'impFigStatus', style: 'margin-top:6px' });
+    var schemeStatus = h('div', { class: 'muted small', id: 'impSchemeStatus', style: 'margin-top:6px' });
+
+    var readBtn = h('button', { class: 'btn', id: 'impRead', onclick: function () {
+      var f = paper.files && paper.files[0];
+      if (!f) { status.textContent = 'Choose the question-paper PDF first.'; return; }
+      readBtn.disabled = true;
+      runPdfJob(f, 'extractQuestions', null, function (t) { status.textContent = t; }).then(function (out) {
+        var taken = {};
+        I.usage = out.usage;
+        I.questions = out.questions.map(function (q, i) {
+          var base = 'Q' + (String(q.label).replace(/[^A-Za-z0-9]/g, '') || (i + 1));
+          return { keep: true, id: uniqueId(base, taken), label: q.label, figure: q.figure, type: q.type,
+                   points: q.points, text: q.text, options: [0, 1, 2, 3].map(function (k) { return q.options[k] || ''; }),
+                   extraOptions: q.options.length > 4, correctIndex: -1, accepted: '', rubric: '', imageHash: '',
+                   imageChoices: 0, fromScheme: false };
+        });
+        applySuggestions();
+        status.textContent = 'Read ' + I.questions.length + ' questions' +
+          (out.usage ? ' (model usage: ' + out.usage.input_tokens + ' input, ' + out.usage.output_tokens + ' output tokens)' : '') +
+          '. Check each one below.';
+        renderReview();
+      }).catch(function (e) { status.textContent = 'Failed: ' + e.message; })
+        .then(function () { readBtn.disabled = false; });
+    } }, 'Read the PDF');
+
+    // Figures: upload several files at once; names like "..._Q3_clock.png" are matched to question 3.
+    figures.addEventListener('change', function () {
+      var files = Array.prototype.slice.call(figures.files || []);
+      if (!files.length) { return; }
+      var done = 0; var failed = [];
+      function next(i) {
+        if (i >= files.length) {
+          figStatus.textContent = 'Uploaded ' + done + ' of ' + files.length + (failed.length ? '. Failed: ' + failed.join('; ') : '.');
+          return api('GET', '/api/admin/images').then(function (d) { I.images = d.images; applySuggestions(); renderReview(); });
+        }
+        figStatus.textContent = 'Uploading ' + (i + 1) + ' of ' + files.length + '...';
+        return prepareImage(files[i]).then(function (blob) {
+          return api('POST', '/api/admin/images', blob, { 'X-Filename': encodeURIComponent(files[i].name) });
+        }).then(function () { done++; })
+          .catch(function (e) { failed.push(files[i].name + ' (' + e.message + ')'); })
+          .then(function () { return next(i + 1); });
+      }
+      next(0);
+    });
+
+    var schemeBtn = h('button', { class: 'btn secondary', id: 'impReadScheme', onclick: function () {
+      var f = scheme.files && scheme.files[0];
+      var kept = I.questions.filter(function (q) { return q.keep; });
+      if (!kept.length) { schemeStatus.textContent = 'Read the question paper first.'; return; }
+      if (!f) { schemeStatus.textContent = 'Choose the marking-scheme PDF first.'; return; }
+      schemeBtn.disabled = true;
+      var items = kept.map(function (q) {
+        return { id: q.id, type: q.type, points: q.points, text: q.text,
+                 options: q.type === 'mc' ? q.options : [] };
+      });
+      runPdfJob(f, 'generateRubrics', items, function (t) { schemeStatus.textContent = t; }).then(function (out) {
+        var filled = 0;
+        kept.forEach(function (q) {
+          var r = out.rubrics[q.id];
+          if (!r) { return; }
+          if (r.correctIndex !== undefined) { q.correctIndex = r.correctIndex; }
+          if (r.accepted) { q.accepted = r.accepted.join('\n'); }
+          if (r.rubric) { q.rubric = r.rubric; }
+          q.fromScheme = true; filled++;
+        });
+        schemeStatus.textContent = 'Filled ' + filled + ' of ' + out.asked + ' questions from the marking scheme. Check them.' +
+          (out.usage ? ' (model usage: ' + out.usage.input_tokens + ' input, ' + out.usage.output_tokens + ' output tokens)' : '');
+        renderReview();
+      }).catch(function (e) { schemeStatus.textContent = 'Failed: ' + e.message; })
+        .then(function () { schemeBtn.disabled = false; });
+    } }, 'Read the marking scheme');
+
+    return h('div', null,
+      h('div', { class: 'card' },
+        h('h3', null, '1. Question paper PDF'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'The PDF is read by the AI model (tokens are used). Up to 10 MB. Nothing is saved until you press Import at the end.'),
+        h('div', { class: 'toolbar' }, paper, setSel, readBtn), status),
+      h('div', { class: 'card' },
+        h('h3', null, '2. Figures (optional, can be done before or after)'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'Choose all the figure files at once. A file whose name contains Q3 (for example G10_M2_Q3_clock.png) is ' +
+          'suggested for question 3. Where two figures share a question number you choose.'),
+        figures, figStatus),
+      h('div', { class: 'card' },
+        h('h3', null, '3. Marking scheme PDF (optional)'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'Fills the correct option of multiple-choice questions, the accepted answers of short questions and a rubric ' +
+          'for open-ended ones. It is a second model call. Always check the result.'),
+        h('div', { class: 'toolbar' }, scheme, schemeBtn), schemeStatus),
+      h('div', { id: 'impReview' }),
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn secondary', onclick: function () { S.questions = null; questionsView(); } }, 'Cancel')));
+  }
+
+  /** Review cards: one per extracted question, every field editable. */
+  function renderReview() {
+    var box = byId('impReview');
+    if (!box) { return; }
+    // The cards are rebuilt from scratch on every change (figure picked, type
+    // changed, item ticked). Emptying the box makes the page shorter for a
+    // moment and the browser jumps back to the top, so the scroll position is
+    // saved here and put back once the new cards are in place.
+    var scrollY = document.documentElement.scrollTop || document.body.scrollTop || 0;
+    clear(box);
+    if (!I.questions.length) { return; }
+
+    var cards = I.questions.map(function (q, idx) {
+      var taken = I.existing[I.set + '/' + q.id];
+      var idInput = h('input', { type: 'text', class: 'rvId', value: q.id, style: 'width:110px', oninput: function (e) { q.id = e.target.value.trim(); } });
+      var typeSel = h('select', { class: 'rvType', onchange: function (e) { q.type = e.target.value; renderReview(); } },
+        [['mc', 'Multiple choice'], ['short', 'Short answer'], ['openEnded', 'Open-ended']].map(function (t) {
+          return h('option', { value: t[0], selected: q.type === t[0] }, t[1]); }));
+      var pts = h('input', { type: 'number', class: 'rvPoints', min: 1, max: 100, value: String(q.points), style: 'width:70px',
+                             oninput: function (e) { q.points = Number(e.target.value); } });
+      var text = h('textarea', { class: 'rvText', oninput: function (e) { q.text = e.target.value; } }); text.value = q.text;
+
+      var answer;
+      if (q.type === 'mc') {
+        answer = h('div', null, [0, 1, 2, 3].map(function (k) {
+          return h('div', { class: 'toolbar', style: 'margin-bottom:4px' },
+            h('label', { class: 'check' },
+              h('input', { type: 'radio', name: 'rvCorrect' + idx, class: 'rvCorrect', value: String(k),
+                           checked: q.correctIndex === k, onchange: function () { q.correctIndex = k; } }),
+              'ABCD'[k] + (q.correctIndex === k ? ' (correct)' : '')),
+            h('input', { type: 'text', class: 'rvOpt', value: q.options[k], style: 'flex:1;min-width:200px',
+                         oninput: function (e) { q.options[k] = e.target.value; } }));
+        }), q.extraOptions ? h('div', { class: 'small', style: 'color:var(--warning)' },
+          'More than four options were printed; only the first four are kept.') : null);
+      } else if (q.type === 'short') {
+        var acc = h('textarea', { class: 'rvAccepted', style: 'min-height:60px', oninput: function (e) { q.accepted = e.target.value; } });
+        acc.value = q.accepted;
+        answer = h('div', { class: 'field' }, h('label', null, 'Accepted answers (one per line)'), acc);
+      } else {
+        var rub = h('textarea', { class: 'rvRubric', style: 'min-height:80px', oninput: function (e) { q.rubric = e.target.value; } });
+        rub.value = q.rubric;
+        answer = h('div', { class: 'field' }, h('label', null, 'Marking rubric (never shown to students)'), rub);
+      }
+
+      var imgSel = h('select', { class: 'rvImage', onchange: function (e) { q.imageHash = e.target.value; renderReview(); } },
+        h('option', { value: '' }, '(no figure)'),
+        I.images.map(function (im) { return h('option', { value: im.hash, selected: im.hash === q.imageHash }, im.name || im.hash.slice(0, 12)); }));
+
+      return h('div', { class: 'qcard' + (q.keep ? '' : ' wrong'), 'data-idx': idx },
+        h('div', { class: 'qhead' },
+          h('label', { class: 'check' },
+            h('input', { type: 'checkbox', class: 'rvKeep', checked: q.keep, onchange: function (e) { q.keep = e.target.checked; renderReview(); } }),
+            'Import  ' + (q.label || ('#' + (idx + 1)))),
+          taken ? h('span', { class: 'pill fault' }, 'id already exists in set ' + I.set) : null,
+          q.fromScheme ? h('span', { class: 'pill ok' }, 'from marking scheme') : null),
+        h('div', { class: 'toolbar' }, h('span', { class: 'small muted' }, 'Id'), idInput, typeSel,
+          h('span', { class: 'small muted' }, 'Points'), pts),
+        text,
+        q.figure ? h('div', { class: 'small muted', style: 'margin-top:6px' }, 'Mentions ' + q.figure) : null,
+        h('div', { class: 'toolbar', style: 'margin-top:6px' }, h('span', { class: 'small muted' }, 'Figure'), imgSel,
+          q.imageChoices > 1 && !q.imageHash ? h('span', { class: 'small', style: 'color:var(--warning)' },
+            q.imageChoices + ' figures match this question number: choose one') : null),
+        q.imageHash ? h('img', { src: API_BASE + '/img/' + q.imageHash, alt: 'Figure',
+                                 style: 'max-width:240px;max-height:160px;display:block;margin:6px 0' }) : null,
+        h('div', { style: 'margin-top:10px' }, answer));
+    });
+
+    var kept = I.questions.filter(function (q) { return q.keep; });
+    var noKey = kept.filter(function (q) { return q.type === 'mc' && q.correctIndex < 0; }).length;
+    var noRubric = kept.filter(function (q) { return q.type === 'openEnded' && !q.rubric.trim(); }).length;
+    box.appendChild(h('h3', { style: 'margin:16px 0 8px' }, 'Review (' + kept.length + ' of ' + I.questions.length + ' will be imported into set ' + I.set + ')'));
+    cards.forEach(function (c) { box.appendChild(c); });
+    box.appendChild(h('div', { class: 'card' },
+      noKey ? h('div', { class: 'msg err' }, noKey + ' multiple-choice question(s) have no correct answer chosen yet.') : null,
+      noRubric ? h('div', { class: 'msg info' }, noRubric + ' open-ended question(s) have no rubric; the AI will grade them without one.') : null,
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn', id: 'impSave', onclick: importQuestions }, 'Import ' + kept.length + ' question(s)'))));
+    document.documentElement.scrollTop = scrollY;
+    document.body.scrollTop = scrollY;
+  }
+
+  /** Validates the kept cards and sends them in one bulk call (the server allows 80). */
+  function importQuestions() {
+    var kept = I.questions.filter(function (q) { return q.keep; });
+    var problems = [];
+    var seen = {};
+    var payload = kept.map(function (q) {
+      var label = q.id || '(no id)';
+      if (!/^[A-Za-z0-9_.()-]{1,40}$/.test(q.id)) { problems.push(label + ': id must be 1-40 letters, digits or _ . ( ) -'); }
+      if (seen[q.id]) { problems.push(label + ': duplicate id'); }
+      seen[q.id] = true;
+      if (I.existing[I.set + '/' + q.id]) { problems.push(label + ': already exists in set ' + I.set); }
+      if (!String(q.text).trim()) { problems.push(label + ': empty text'); }
+      var out = { set: I.set, id: q.id, section: mainNumber(q.label) ? 'Q' + mainNumber(q.label) : '', type: q.type, points: q.points, text: q.text };
+      if (q.imageHash) { out.imageHash = q.imageHash; }
+      if (q.type === 'mc') {
+        if (q.options.some(function (o) { return !String(o).trim(); })) { problems.push(label + ': needs four options'); }
+        if (q.correctIndex < 0) { problems.push(label + ': choose the correct option'); }
+        out.options = q.options; out.correctIndex = q.correctIndex;
+      } else if (q.type === 'short') {
+        out.accepted = q.accepted.split('\n').map(function (a) { return a.trim(); }).filter(Boolean);
+        if (!out.accepted.length) { problems.push(label + ': needs at least one accepted answer'); }
+      } else {
+        out.rubric = q.rubric;
+      }
+      return out;
+    });
+    if (!payload.length) { return fail(new Error('Nothing selected to import.')); }
+    if (problems.length) { return fail(new Error('Fix before importing: ' + problems.slice(0, 6).join(' | '))); }
+    if (payload.length > 80) { return fail(new Error('Import at most 80 questions at a time: untick some.')); }
+
+    byId('impSave').disabled = true;
+    api('POST', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions/bulk', { questions: payload }).then(function (d) {
+      S.questions = null; S.qSet = I.set; I = null;
+      banner('Imported ' + d.added + ' question(s). Check the marks total below against the paper.', 'okmsg');
+      questionsView();
+    }).catch(function (e) { byId('impSave').disabled = false; fail(e); });
   }
 
   // ---------------------------------------------------------------------------

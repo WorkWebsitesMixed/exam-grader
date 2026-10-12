@@ -96,7 +96,16 @@ Cron sweep (every minute): (a) `started` attempts past `deadline_at + 60 s` that
 
 ## 7. Long admin jobs
 
-PDF import and rubric generation send a PDF to Claude. The browser uploads the PDF to R2 (`tmp/<jobId>.pdf`); a queue consumer reads it and calls Claude (queue consumer limits: 15 min wall time, 30 s CPU by default). The admin panel polls `GET /api/admin/jobs/:id`. This avoids the 10 ms CPU limit of normal requests. Unverified: whether even a request-time upload of a few MB fits in 10 ms, which is why uploads go straight to R2.
+PDF import and marking-scheme reading send a PDF to Claude. Implemented (2026-10-12) in `src/jobs.js`:
+
+1. `POST /api/admin/jobs?kind=extractQuestions|generateRubrics`, body = the raw PDF (<= 10 MB, `%PDF-` checked) -> `{jobId}`. The PDF is stored in R2 as `tmp/<jobId>.pdf`; nothing is sent to the model yet.
+2. `POST /api/admin/jobs/:id/run`, JSON `{items}` (required for `generateRubrics`: the questions to match, 1..80 of `{id,type,points,text,options}`) -> queued. Starting twice is 409.
+3. The queue consumer reads the PDF, calls the Messages API with a base64 `document` block (the same shape `Code.gs` used; 32 MB / 100 pages limits are the API's), stores `output` on the job row and deletes the temp files. Output for extraction: `{questions:[{label,text,type,points,options,figure}], usage}`; for rubrics: `{rubrics:{<id>:{correctIndex}|{accepted:[..]}|{rubric}}, asked, usage}`. Everything is sanitised (type whitelist, clamped numbers, bounded strings, only asked ids, A-D letters converted to 0-based indexes).
+4. `GET /api/admin/jobs/:id` -> `{kind,status,error,output}`; the admin page polls every 2 s.
+
+Failures: a permanent error (bad key, unreadable reply, a 4xx such as a PDF over the page limit) is stored on the job; a retryable one (429/5xx) is retried by the queue; the sweep marks a job still `running` after 20 minutes as `error`. `generateRubrics` takes its questions from the request, not from the database, so the same flow works on a not-yet-imported review list. Nothing the model returns is saved as a question until the teacher presses Import in the review screen.
+
+`GET /api/admin/images` lists uploaded figures (name, size, how many questions use them) for suggesting figures in the import screen. Model used: `EXTRACTION_MODEL` if set, else `GRADING_MODEL`. Docs checked 2026-10-12: platform.claude.com/docs/en/build-with-claude/pdf-support (32 MB request, 100 pages when the context window is under 1M tokens, about 1,500-3,000 text tokens per page plus image tokens per page).
 
 ## 8. Email
 

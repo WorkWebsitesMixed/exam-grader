@@ -19,11 +19,13 @@ import { GradingError, DEFAULT_BOUNDARIES, calculateGrade, computeTotals, gradeQ
 import { assessEvents, parseEvents, withLegacySwitches } from './integrity.js';
 import { buildSimilarityReport } from './similarity.js';
 import { sendAttemptEmail } from './mail.js';
+import { processJob } from './jobs.js';
 
 const SWEEP_LIMIT = 10;                 // rows per category per run (query budget)
 const SUBMIT_GRACE_MS = 60 * 1000;      // after the deadline before auto-submitting
 const STUCK_GRADING_MS = 10 * 60 * 1000;
 const STUCK_SUBMITTED_MS = 2 * 60 * 1000;
+const STUCK_JOB_MS = 20 * 60 * 1000;
 const EMAIL_PER_SWEEP = 8;             // results emails sent per run (sent in parallel)
 
 /** Parses an exam's boundaries JSON, falling back per set to the defaults. */
@@ -114,6 +116,7 @@ export async function handleQueueBatch(batch, env, deps) {
     try {
       if (body.type === 'grade') { await processGrade(env, deps, body.attemptId); }
       if (body.type === 'similarity') { await processSimilarity(env, deps, body.examId); }
+      if (body.type === 'job') { await processJob(env, deps, body.jobId); }
       message.ack();
     } catch (e) {
       console.error('queue job failed', body, e && e.message);
@@ -166,6 +169,10 @@ export async function runSweep(env, deps) {
     await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });
     enqueued.stuckSubmitted++;
   }
+
+  // A PDF job whose retries ran out stays 'running'; say so instead of leaving the admin page waiting.
+  await env.DB.prepare("UPDATE jobs SET status = 'error', error = 'Timed out. Please try again.', updated_at = ? " +
+    "WHERE status = 'running' AND updated_at < ?").bind(now, now - STUCK_JOB_MS).run();
 
   if (env.MAIL_RELAY_URL) {
     const mail = await env.DB.prepare(

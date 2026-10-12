@@ -405,3 +405,151 @@ test('questions: a figure is uploaded from the form, stored by hash, saved with 
   await until(() => db(w).prepare("SELECT image_hash FROM questions WHERE qid = 'Q1'").get().image_hash === null, 'image detached');
   page.win.close();
 });
+
+// ---------------------------------------------------------------------------
+// Import from PDF
+// ---------------------------------------------------------------------------
+
+const FAKE_PDF = new TextEncoder().encode('%PDF-1.4\n% test\n%%EOF');
+const pngVariant = (n) => {
+  const base = Uint8Array.from(Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
+  const out = new Uint8Array(base.length + 1); out.set(base); out[base.length] = n;   // different bytes, different hash
+  return out;
+};
+
+/** jsdom has no way to choose files; define `files` on the input like a browser would expose it. */
+function setFiles(page, input, files) {
+  Object.defineProperty(input, 'files', { value: files, configurable: true });
+}
+
+test('import from PDF: read the paper, upload figures, read the scheme, review, import', async () => {
+  const extracted = [
+    { label: '3(a)', text: 'Fig. 3.1 shows a clock.\n\nState the type of motion of the pendulum.', type: 'short', points: 1, options: [], figure: 'Fig. 3.1' },
+    { label: '9', text: 'Which unit is used for resistance?', type: 'mc', points: 1, options: ['volt', 'amp', 'ohm', 'watt'], figure: '' },
+    { label: '11(a)', text: 'Fig. 11.1 shows a component.\n\nName it.', type: 'short', points: 1, options: [], figure: 'Fig. 11.1' },
+    { label: '12', text: 'Describe how the transistor switches on a motor.', type: 'openEnded', points: 3, options: [], figure: '' },
+  ];
+  const w = await makeWorldFor(extracted);
+  const page = await signedIn(w);
+  tab(page, 'questions');
+  await until(() => $(page, '#importPdf'), 'questions tab');
+  $(page, '#importPdf').click();
+  await until(() => $(page, '#impRead'), 'import screen');
+
+  // 1. Figures first: three files, two of them for question 11.
+  const win = page.win;
+  setFiles(page, $(page, '#impFigures'), [
+    new win.File([pngVariant(1)], 'G10_M2_Q3_clock.png', { type: 'image/png' }),
+    new win.File([pngVariant(2)], 'G10_M2_Q11_thermistor.png', { type: 'image/png' }),
+    new win.File([pngVariant(3)], 'G10_M2_Q11_potential_divider.png', { type: 'image/png' }),
+  ]);
+  $(page, '#impFigures').dispatchEvent(new win.Event('change'));
+  await until(() => /Uploaded 3 of 3/.test(text(page, '#impFigStatus')), 'figures uploaded');
+  assert.equal(db(w).prepare('SELECT COUNT(*) AS n FROM images').get().n, 3);
+
+  // 2. Question paper.
+  setFiles(page, $(page, '#impPaper'), [new win.File([FAKE_PDF], 'paper.pdf', { type: 'application/pdf' })]);
+  $(page, '#impRead').click();
+  await until(() => w.sent.some((m) => m.type === 'job'), 'extraction job queued');
+  await w.drainQueue();
+  await until(() => page.doc.querySelectorAll('#impReview .qcard').length === 4, 'review cards', 10000);
+  assert.match(text(page, '#impStatus'), /Read 4 questions .* 4200 input, 900 output tokens/);
+
+  const cards = [...page.doc.querySelectorAll('#impReview .qcard')];
+  assert.equal(cards[0].querySelector('.rvId').value, 'Q3a');
+  // Q3 has exactly one figure matching its number: suggested automatically.
+  const clockHash = db(w).prepare("SELECT hash FROM images WHERE original_name = 'G10_M2_Q3_clock.png'").get().hash;
+  assert.equal(cards[0].querySelector('.rvImage').value, clockHash);
+  // Q11 has two: nothing is guessed, and the page says so.
+  assert.equal(cards[2].querySelector('.rvImage').value, '');
+  assert.match(cards[2].textContent, /2 figures match this question number/);
+  // The paper alone cannot know the answer key: import is blocked until it is chosen.
+  assert.match(text(page, '#impReview'), /1 multiple-choice question\(s\) have no correct answer/);
+
+  // Choose the thermistor for Q11(a) by hand (the select re-renders the cards).
+  const thermistor = db(w).prepare("SELECT hash FROM images WHERE original_name = 'G10_M2_Q11_thermistor.png'").get().hash;
+  const sel = page.doc.querySelectorAll('#impReview .qcard')[2].querySelector('.rvImage');
+  sel.value = thermistor; sel.dispatchEvent(new win.Event('change'));
+
+  // 3. Marking scheme fills key, accepted answers and rubric.
+  setFiles(page, $(page, '#impScheme'), [new win.File([FAKE_PDF], 'ms.pdf', { type: 'application/pdf' })]);
+  $(page, '#impReadScheme').click();
+  await until(() => w.sent.some((m) => m.type === 'job'), 'scheme job queued');
+  await w.drainQueue();
+  await until(() => /Filled 4 of 4/.test(text(page, '#impSchemeStatus')), 'scheme read', 10000);
+
+  // 4. Import.
+  $(page, '#impSave').click();
+  await until(() => db(w).prepare("SELECT COUNT(*) AS n FROM questions WHERE qid LIKE 'Q%a' OR qid IN ('Q9','Q12')").get().n >= 4, 'questions saved');
+  const rows = db(w).prepare("SELECT * FROM questions WHERE qid IN ('Q3a','Q9','Q11a','Q12') ORDER BY position").all();
+  assert.deepEqual(rows.map((r) => r.qid), ['Q3a', 'Q9', 'Q11a', 'Q12']);          // paper order kept
+  assert.equal(rows[0].image_hash, clockHash);
+  assert.deepEqual(JSON.parse(rows[0].accepted_answers), ['pendulum swings', 'oscillation']);
+  assert.equal(rows[1].correct_index, 2);                                           // "C" from the scheme -> index 2
+  assert.equal(rows[2].image_hash, thermistor);
+  assert.equal(rows[3].rubric, '1 mark base current, 1 mark switches transistor, 1 mark motor runs.');
+  assert.equal(rows[0].section, 'Q3');
+  page.win.close();
+});
+
+/** World whose fake model answers the two PDF tools. */
+async function makeWorldFor(extracted) {
+  const w = await makeWorld({ modelReply: (system) => {
+    if (/extract exam questions/.test(system)) { return JSON.stringify(extracted); }
+    return JSON.stringify({
+      Q3a: { accepted: ['pendulum swings', 'oscillation'] },
+      Q9: { correct: 'C' },
+      Q11a: { accepted: ['thermistor'] },
+      Q12: { rubric: '1 mark base current, 1 mark switches transistor, 1 mark motor runs.' },
+    });
+  } });
+  await seedExam(w);
+  seedTeacher(w, TEACHER, { role: 'admin' });
+  return w;
+}
+
+test('import from PDF: a PDF that cannot be read shows the reason and saves nothing', async () => {
+  const w = await makeWorld({ modelReply: () => 'I could not read this.' });
+  await seedExam(w);
+  seedTeacher(w, TEACHER, { role: 'admin' });
+  const before = db(w).prepare('SELECT COUNT(*) AS n FROM questions').get().n;
+  const page = await signedIn(w);
+  tab(page, 'questions');
+  await until(() => $(page, '#importPdf'), 'tab');
+  $(page, '#importPdf').click();
+  await until(() => $(page, '#impRead'), 'import screen');
+  setFiles(page, $(page, '#impPaper'), [new page.win.File([FAKE_PDF], 'p.pdf', { type: 'application/pdf' })]);
+  $(page, '#impRead').click();
+  await until(() => w.sent.some((m) => m.type === 'job'), 'queued');
+  await w.drainQueue();
+  await until(() => /Failed: No questions could be read/.test(text(page, '#impStatus')), 'failure shown', 10000);
+  assert.equal(db(w).prepare('SELECT COUNT(*) AS n FROM questions').get().n, before);
+  page.win.close();
+});
+
+test('import review: picking a figure re-renders the cards but keeps the scroll position', async () => {
+  const extracted = [
+    { label: '11(a)', text: 'Fig. 11.1 shows a component.', type: 'short', points: 1, options: [], figure: 'Fig. 11.1' },
+    { label: '12', text: 'Describe.', type: 'openEnded', points: 3, options: [], figure: '' },
+  ];
+  const w = await makeWorldFor(extracted);
+  const page = await signedIn(w);
+  tab(page, 'questions');
+  await until(() => $(page, '#importPdf'), 'tab');
+  $(page, '#importPdf').click();
+  await until(() => $(page, '#impRead'), 'import screen');
+  setFiles(page, $(page, '#impPaper'), [new page.win.File([FAKE_PDF], 'p.pdf', { type: 'application/pdf' })]);
+  $(page, '#impRead').click();
+  await until(() => w.sent.some((m) => m.type === 'job'), 'queued');
+  await w.drainQueue();
+  await until(() => page.doc.querySelectorAll('#impReview .qcard').length === 2, 'cards', 10000);
+
+  page.doc.documentElement.scrollTop = 640;                  // the teacher has scrolled down
+  const sel = $(page, '#impReview .qcard .rvImage');
+  const first = [...sel.options].find((o) => o.value);
+  if (first) { sel.value = first.value; } else { sel.value = ''; }
+  sel.dispatchEvent(new page.win.Event('change'));
+  assert.equal(page.doc.documentElement.scrollTop, 640);
+  page.win.close();
+});

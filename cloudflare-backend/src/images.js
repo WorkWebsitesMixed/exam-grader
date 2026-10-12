@@ -91,3 +91,17 @@ export async function serveImage(request, env, pathname) {
     },
   });
 }
+
+/**
+ * GET /api/admin/images -- the figures uploaded so far (newest first, at most
+ * 200), with how many questions use each. The PDF import screen uses it to
+ * suggest which figure belongs to which question.
+ */
+export async function listImages(c) {
+  const { results } = await c.env.DB.prepare(
+    'SELECT i.hash, i.mime, i.size_bytes, i.original_name, i.created_at, ' +
+    '(SELECT COUNT(*) FROM questions q WHERE q.image_hash = i.hash) AS used ' +
+    'FROM images i ORDER BY i.created_at DESC, i.hash LIMIT 200').all();
+  return { body: { success: true, images: results.map((r) => ({
+    hash: r.hash, mime: r.mime, size: r.size_bytes, name: r.original_name, createdAt: r.created_at, used: r.used })) } };
+}

@@ -21,13 +21,20 @@ export const ORIGIN = 'https://workwebsitesmixed.github.io';
 export class FakeR2 {
   constructor() { this.objects = new Map(); }
   async put(key, value, options = {}) {
-    this.objects.set(key, { bytes: new Uint8Array(value), httpMetadata: options.httpMetadata || {} });
+    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+    this.objects.set(key, { bytes, httpMetadata: options.httpMetadata || {} });
   }
   async get(key) {
     const o = this.objects.get(key);
     if (!o) { return null; }
-    return { body: new Blob([o.bytes]).stream(), httpMetadata: o.httpMetadata };
+    const bytes = o.bytes;
+    return {
+      body: new Blob([bytes]).stream(), httpMetadata: o.httpMetadata,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      text: async () => new TextDecoder().decode(bytes),
+    };
   }
+  async delete(key) { this.objects.delete(key); }
 }
 
 /** Minimal D1Database lookalike backed by node:sqlite. */
@@ -112,7 +119,7 @@ export async function makeWorld({ modelReply } = {}) {
         const user = body.messages[0].content;
         modelCalls.push({ system: body.system, user });
         const text = modelReply ? modelReply(body.system, user) : 'SCORE: 99\nFEEDBACK: Well done, a thorough answer.';
-        return new Response(JSON.stringify({ content: [{ type: 'text', text }] }), { status: 200 });
+        return new Response(JSON.stringify({ content: [{ type: 'text', text }], usage: { input_tokens: 4200, output_tokens: 900 } }), { status: 200 });
       }
       if (String(url).startsWith('https://relay.test/')) {
         if (relay.mode === 'down') { throw new Error('relay unreachable'); }

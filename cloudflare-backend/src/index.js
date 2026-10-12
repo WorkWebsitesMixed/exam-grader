@@ -15,7 +15,8 @@ import { HttpError, corsHeaders, jsonResponse, readJsonBody } from './http.js';
 import { verifySession } from './auth.js';
 import * as student from './student.js';
 import * as admin from './admin.js';
-import { uploadImage, serveImage } from './images.js';
+import { uploadImage, serveImage, listImages } from './images.js';
+import { createJob, runJob, getJob } from './jobs.js';
 import { handleQueueBatch, runSweep } from './queue.js';
 
 /**
@@ -61,6 +62,12 @@ const ROUTES = [
 
   // --- admin: images (the request body is the raw file, so no `body: true`) ---
   { method: 'POST', path: '/api/admin/images', handler: uploadImage, admin: true },
+  { method: 'GET',  path: '/api/admin/images', handler: listImages, admin: true },
+
+  // --- admin: PDF jobs (create takes the raw PDF as the body) ---
+  { method: 'POST', path: '/api/admin/jobs', handler: createJob, admin: true },
+  { method: 'POST', path: '/api/admin/jobs/:id/run', handler: runJob, admin: true, body: true },
+  { method: 'GET',  path: '/api/admin/jobs/:id', handler: getJob, admin: true },
 
   // --- admin: teachers ---
   { method: 'GET',  path: '/api/admin/teachers',        handler: admin.listTeachers, admin: true },

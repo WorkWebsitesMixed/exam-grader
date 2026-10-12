@@ -34,7 +34,7 @@ export function corsHeaders(request, env) {
   const origin = request.headers.get('Origin') || '';
   const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Filename',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
