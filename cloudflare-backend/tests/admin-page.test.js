@@ -55,7 +55,15 @@ function openPage(w) {
         initialize(cfg) { window.__gsi.cb = cfg.callback; }, renderButton() {}, disableAutoSelect() {} } } };
       window.fetch = async (url, init = {}) => {
         const u = new URL(String(url));
-        requests.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : undefined });
+        // jsdom's Blob is not Node's: read it into bytes before handing it to the Worker.
+        if (init.body && typeof init.body === 'object' && typeof init.body.size === 'number') {
+          init = { ...init, body: await new Promise((res) => {
+            const fr = new window.FileReader();
+            fr.onload = () => res(new Uint8Array(fr.result));
+            fr.readAsArrayBuffer(init.body);
+          }) };
+        }
+        requests.push({ url: String(url), method: init.method || 'GET', body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : undefined });
         if (u.origin !== BASE) { return new Response('{"success":false}', { status: 502 }); }
         return w.app.fetch(new Request(String(url), { ...init, headers: { ...(init.headers || {}), Origin: 'https://workwebsitesmixed.github.io' } }), w.env);
       };
@@ -349,5 +357,51 @@ test('an ended session (revoked teacher) returns to the sign-in screen', async (
   tab(page, 'questions');
   await until(() => !page.doc.getElementById('signinCard').classList.contains('hidden'), 'back to sign-in');
   assert.match(text(page, '#signinError'), /session ended/i);
+  page.win.close();
+});
+
+test('tools: resend emails says so when the relay is not configured, and queues them when it is', async () => {
+  const w = await setup();
+  const page = await signedIn(w);
+  tab(page, 'tools');
+  await until(() => $(page, '#mailResend'), 'tools');
+  $(page, '#mailResend').click();
+  await until(() => /not configured/.test(text(page, '#mailStatus')), 'not configured message');
+
+  w.env.MAIL_RELAY_URL = 'https://relay.test/exec';
+  $(page, '#mailResend').click();
+  await until(() => /1 email\(s\) queued/.test(text(page, '#mailStatus')), 'queued message');
+  assert.equal(db(w).prepare('SELECT email_status FROM attempts').get().email_status, 'pending');
+  page.win.close();
+});
+
+test('questions: a figure is uploaded from the form, stored by hash, saved with the question and can be removed', async () => {
+  const w = await setup();
+  const page = await signedIn(w);
+  tab(page, 'questions');
+  await until(() => $(page, 'tr[data-qid="Q1"] button.edit'), 'list');
+  $(page, 'tr[data-qid="Q1"] button.edit').click();
+  await until(() => $(page, '#qfImageFile'), 'form');
+
+  const png = Uint8Array.from(Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
+  const input = $(page, '#qfImageFile');
+  Object.defineProperty(input, 'files', { value: [new page.win.File([png], 'fig 1.png', { type: 'image/png' })] });
+  input.dispatchEvent(new page.win.Event('change'));
+  await until(() => /Image uploaded/.test(text(page, '#qfImageNote')), 'upload finished');
+  const img = db(w).prepare('SELECT * FROM images').get();
+  assert.equal(img.original_name, 'fig 1.png');
+  assert.ok(w.env.FILES.objects.has('img/' + img.hash));
+
+  $(page, '#qfSave').click();
+  await until(() => db(w).prepare("SELECT image_hash FROM questions WHERE qid = 'Q1'").get().image_hash === img.hash, 'saved with image');
+
+  // Reopen and remove it.
+  await until(() => $(page, 'tr[data-qid="Q1"] button.edit'), 'list again');
+  $(page, 'tr[data-qid="Q1"] button.edit').click();
+  await until(() => $(page, '#qfImageRemove') && !$(page, '#qfImageRemove').classList.contains('hidden'), 'remove shown');
+  $(page, '#qfImageRemove').click();
+  $(page, '#qfSave').click();
+  await until(() => db(w).prepare("SELECT image_hash FROM questions WHERE qid = 'Q1'").get().image_hash === null, 'image detached');
   page.win.close();
 });

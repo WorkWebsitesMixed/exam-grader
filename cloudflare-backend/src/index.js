@@ -15,6 +15,7 @@ import { HttpError, corsHeaders, jsonResponse, readJsonBody } from './http.js';
 import { verifySession } from './auth.js';
 import * as student from './student.js';
 import * as admin from './admin.js';
+import { uploadImage, serveImage } from './images.js';
 import { handleQueueBatch, runSweep } from './queue.js';
 
 /**
@@ -54,8 +55,12 @@ const ROUTES = [
   { method: 'POST', path: '/api/admin/attempts/:id/reset',     handler: admin.deleteAttempt, admin: true },
   { method: 'POST', path: '/api/admin/exams/:id/recalculate',  handler: admin.recalculate, admin: true, body: true },
   { method: 'POST', path: '/api/admin/exams/:id/regrade-mc',   handler: admin.regradeMc, admin: true, body: true },
+  { method: 'POST', path: '/api/admin/exams/:id/resend-emails', handler: admin.resendEmails, admin: true, body: true },
   { method: 'POST', path: '/api/admin/exams/:id/similarity',   handler: admin.requestSimilarity, admin: true, body: true },
   { method: 'GET',  path: '/api/admin/exams/:id/similarity',   handler: admin.getSimilarity, admin: true },
+
+  // --- admin: images (the request body is the raw file, so no `body: true`) ---
+  { method: 'POST', path: '/api/admin/images', handler: uploadImage, admin: true },
 
   // --- admin: teachers ---
   { method: 'GET',  path: '/api/admin/teachers',        handler: admin.listTeachers, admin: true },
@@ -104,7 +109,10 @@ export function createApp(deps) {
         return jsonResponse(request, env, out.body, out.status || 200, extra);
       }
 
-      // GET /img/<hash> arrives in the next slice (R2). Anything else is unknown.
+      // Figures are the one non-JSON, public route: GET /img/<sha256>.
+      const image = await serveImage(request, env, url.pathname);
+      if (image) { return image; }
+
       throw new HttpError(404, 'not_found', 'Not found');
     } catch (err) {
       if (err instanceof HttpError) {

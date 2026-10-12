@@ -422,6 +422,26 @@ export async function regradeMc(c) {
   });
 }
 
+// ---------- results email ----------
+
+/**
+ * Marks the graded attempts of an exam (optionally one class and/or set) as
+ * 'pending' email again; the once-a-minute sweep sends them. Nothing is sent
+ * from this request, so it stays fast however many students match.
+ */
+export async function resendEmails(c) {
+  await requireExam(c.env, c.params.id);
+  if (!c.env.MAIL_RELAY_URL) { throw new HttpError(409, 'email_disabled', 'Email relay is not configured'); }
+  const klass = String(c.body.class || '').trim();
+  const setId = String(c.body.set || '').trim().toUpperCase();
+  let sql = "UPDATE attempts SET email_status = 'pending' WHERE exam_id = ? AND status = 'graded' AND email_status != 'pending'";
+  const binds = [c.params.id];
+  if (klass) { sql += ' AND class = ?'; binds.push(klass); }
+  if (setId) { sql += ' AND set_id = ?'; binds.push(setId); }
+  const r = await c.env.DB.prepare(sql).bind(...binds).run();
+  return { body: { success: true, queued: r.meta.changes } };
+}
+
 // ---------- similarity report ----------
 
 /** Queues a (re)computation of the similarity report for an exam. */

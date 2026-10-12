@@ -102,6 +102,8 @@ PDF import and rubric generation send a PDF to Claude. The browser uploads the P
 
 Cloudflare Email Sending is not available on the free plan. Results email is a **best-effort backup relay**: the queue consumer POSTs `{key, to, subject, html}` to a small Apps Script web-app action that calls `MailApp.sendEmail` (consumer-account quota 100/day, same as today). The relay verifies `MAIL_RELAY_KEY` in a Script Property. The exam never waits on email; failure only sets `email_status='failed'`.
 
+Implemented (2026-10-12): `src/mail.js` builds the message (all student text HTML-escaped) and calls the relay; the once-a-minute sweep sends up to 8 `pending` emails per run, and only when `deadline_at` has passed (same rule as `GET /api/result`, so an early finisher does not receive the answers while classmates work). `POST /api/admin/exams/:id/resend-emails` body `{class?, set?}` sets `email_status='pending'` again for graded attempts (409 `email_disabled` when `MAIL_RELAY_URL` is empty) and returns `{queued}`. The relay is a separate Apps Script project in `tools/mail-relay/` (key check, school-domain recipients only).
+
 ## 9. Archive and history
 
 - Existing submissions stay in the Google Sheet as an **archive** (decision 2026-10-10). They are not imported into D1; `results.html` on the new backend shows only attempts taken after cutover.

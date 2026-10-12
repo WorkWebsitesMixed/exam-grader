@@ -18,11 +18,13 @@ import { makeAskModel } from './claude.js';
 import { GradingError, DEFAULT_BOUNDARIES, calculateGrade, computeTotals, gradeQuestion } from './grading.js';
 import { assessEvents, parseEvents, withLegacySwitches } from './integrity.js';
 import { buildSimilarityReport } from './similarity.js';
+import { sendAttemptEmail } from './mail.js';
 
 const SWEEP_LIMIT = 10;                 // rows per category per run (query budget)
 const SUBMIT_GRACE_MS = 60 * 1000;      // after the deadline before auto-submitting
 const STUCK_GRADING_MS = 10 * 60 * 1000;
 const STUCK_SUBMITTED_MS = 2 * 60 * 1000;
+const EMAIL_PER_SWEEP = 8;             // results emails sent per run (sent in parallel)
 
 /** Parses an exam's boundaries JSON, falling back per set to the defaults. */
 export function boundariesOf(exam) {
@@ -122,16 +124,22 @@ export async function handleQueueBatch(batch, env, deps) {
 }
 
 /**
- * Cron entry point. Three rescues, each bounded by SWEEP_LIMIT:
+ * Cron entry point. Three rescues, each bounded by SWEEP_LIMIT, plus the email stage:
  *  (a) a student's time ran out without a submit -> submit the autosaved answers
  *  (b) grading started but never finished (worker killed) -> enqueue again
  *  (c) submitted but the enqueue was lost -> enqueue again
  * An expired attempt with NO saved answers is deliberately left alone: the
  * teacher sees it as "started" and decides, instead of the system inventing a 0.
+ *
+ * Email stage: graded attempts whose email_status is 'pending' and whose
+ * deadline has passed are sent here, a few per minute, straight from the cron
+ * invocation. Doing it here (not through the queue) means one sender, so a
+ * message can never be delivered twice by two overlapping jobs, and "Resend"
+ * is just setting email_status back to 'pending'.
  */
 export async function runSweep(env, deps) {
   const now = deps.now();
-  const enqueued = { expired: 0, stuckGrading: 0, stuckSubmitted: 0 };
+  const enqueued = { expired: 0, stuckGrading: 0, stuckSubmitted: 0, emailed: 0 };
 
   const expired = await env.DB.prepare(
     "SELECT id FROM attempts WHERE status = 'started' AND answers_saved_at IS NOT NULL AND deadline_at < ? LIMIT ?")
@@ -157,6 +165,14 @@ export async function runSweep(env, deps) {
   for (const row of submitted.results) {
     await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });
     enqueued.stuckSubmitted++;
+  }
+
+  if (env.MAIL_RELAY_URL) {
+    const mail = await env.DB.prepare(
+      "SELECT id FROM attempts WHERE status = 'graded' AND email_status = 'pending' AND deadline_at < ? " +
+      'ORDER BY deadline_at LIMIT ?').bind(now, EMAIL_PER_SWEEP).all();
+    const outcomes = await Promise.all(mail.results.map((row) => sendAttemptEmail(env, deps, row.id)));
+    enqueued.emailed = outcomes.filter((o) => o === 'sent').length;
   }
   return enqueued;
 }

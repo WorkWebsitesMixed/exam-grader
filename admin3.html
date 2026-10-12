@@ -18,8 +18,8 @@
       database (names, answers, question text) is put on the page with
       textContent only, never innerHTML. That is what the `h()` builder does.
 
-  Not here yet (they need backend pieces that are not built): image upload,
-  PDF import and rubric generation, resending result emails, export.
+  Not here yet (they need backend pieces that are not built): PDF import and
+  rubric generation, export.
 -->
 <html lang="en">
 <head>
@@ -253,11 +253,13 @@
    * Error whose message is the server's text. A 401 means the session ended
    * (expired, or the teacher was removed), so the page returns to sign-in.
    */
-  function api(method, path, body) {
+  function api(method, path, body, extraHeaders) {
     var headers = {};
     if (S.session) { headers.Authorization = 'Bearer ' + S.session; }
     var init = { method: method, headers: headers };
-    if (body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+    if (extraHeaders) { Object.keys(extraHeaders).forEach(function (k) { headers[k] = extraHeaders[k]; }); }
+    if (body instanceof Blob) { init.body = body; }          // raw upload: the browser sets Content-Type
+    else if (body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
     return fetch(API_BASE + path, init).then(function (res) {
       return res.json().catch(function () { return { success: false, error: 'Bad response from server' }; })
         .then(function (data) {
@@ -507,7 +509,9 @@
         h('td', null, a.class),
         h('td', null, a.set),
         h('td', null, STATUS_LABEL[a.status] || a.status,
-          a.status === 'error' ? h('div', { class: 'small', style: 'color:var(--error)' }, a.gradingError || '') : null),
+          a.status === 'error' ? h('div', { class: 'small', style: 'color:var(--error)' }, a.gradingError || '') : null,
+          a.status === 'graded' && a.emailStatus !== 'none'
+            ? h('div', { class: 'small muted' }, 'email ' + a.emailStatus) : null),
         h('td', null, a.maxScore ? a.totalScore + '/' + a.maxScore : '-'),
         h('td', null, a.percentage === null ? '-' : a.percentage + '%'),
         h('td', { style: 'font-weight:bold;color:var(--primary)' }, a.finalGrade || '-'),
@@ -674,6 +678,40 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Images
+  // ---------------------------------------------------------------------------
+
+  var MAX_IMAGE_SIDE = 1600;          // px; larger figures are scaled down before upload
+  var MAX_IMAGE_BYTES = 1.5 * 1024 * 1024;   // server limit is 2 MB; leave headroom
+
+  /**
+   * Resolves with the Blob to upload. Small figures go as they are. Large ones
+   * are scaled to at most MAX_IMAGE_SIDE px (PNG stays PNG so diagrams keep
+   * crisp lines; everything else becomes JPEG). If the browser cannot decode
+   * the file the original is sent and the server decides.
+   */
+  function prepareImage(file) {
+    return new Promise(function (resolve) {
+      var url;
+      try { url = URL.createObjectURL(file); } catch (e) { resolve(file); return; }
+      var img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth; var hgt = img.naturalHeight;
+        if (Math.max(w, hgt) <= MAX_IMAGE_SIDE && file.size <= MAX_IMAGE_BYTES) { resolve(file); return; }
+        var scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(w, hgt));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale); canvas.height = Math.round(hgt * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        var type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        canvas.toBlob(function (blob) { resolve(blob || file); }, type, 0.85);
+      };
+      img.src = url;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Questions
   // ---------------------------------------------------------------------------
 
@@ -745,6 +783,31 @@
         h('label', { class: 'check' }, radio, 'Option ' + 'ABCD'[i] + ' is correct'), text);
     }));
 
+    // Image: held as a hash. Upload gives a new hash; Remove clears it; save sends it.
+    f.imageHash = q && q.imageHash ? q.imageHash : '';
+    var preview = h('img', { id: 'qfImagePreview', alt: 'Question figure', style: 'max-width:260px;max-height:200px;display:block;margin:8px 0' });
+    var imageNote = h('div', { class: 'small muted', id: 'qfImageNote' });
+    var file = h('input', { type: 'file', id: 'qfImageFile', accept: 'image/png,image/jpeg,image/gif,image/webp' });
+    var removeBtn = h('button', { class: 'btn secondary small', id: 'qfImageRemove', onclick: function () {
+      f.imageHash = ''; showImage(); } }, 'Remove image');
+    function showImage() {
+      preview.classList.toggle('hidden', !f.imageHash);
+      removeBtn.classList.toggle('hidden', !f.imageHash);
+      if (f.imageHash) { preview.src = API_BASE + '/img/' + f.imageHash; }
+    }
+    file.addEventListener('change', function () {
+      var chosen = file.files && file.files[0];
+      if (!chosen) { return; }
+      imageNote.textContent = 'Uploading...';
+      prepareImage(chosen).then(function (blob) {
+        return api('POST', '/api/admin/images', blob, { 'X-Filename': encodeURIComponent(chosen.name) });
+      }).then(function (d) {
+        f.imageHash = d.hash; imageNote.textContent = 'Image uploaded.'; showImage();
+      }).catch(function (e) { imageNote.textContent = 'Upload failed: ' + e.message; });
+    });
+    var imageBox = h('div', { class: 'field', style: 'margin-top:12px' },
+      h('label', null, 'Figure (optional)'), preview, file, ' ', removeBtn, imageNote);
+
     f.accepted = h('textarea', { id: 'qfAccepted' }); f.accepted.value = q && q.accepted ? q.accepted.join('\n') : '';
     var shortBox = h('div', { id: 'qfShort' }, field('Accepted answers (one per line)', f.accepted));
     f.rubric = h('textarea', { id: 'qfRubric', style: 'min-height:140px' }); f.rubric.value = q ? q.rubric || '' : '';
@@ -761,9 +824,8 @@
       var type = f.type.value;
       var body = { set: f.set.value, id: f.id.value.trim(), section: f.section.value, type: type,
                    points: Number(f.points.value), text: f.text.value };
-      // Keep the existing image: the form has no image control yet and an edit
-      // replaces the whole row, so leaving imageHash out would detach it.
-      if (q && q.imageHash) { body.imageHash = q.imageHash; }
+      // An edit replaces the whole row, so the image must be sent back or it detaches.
+      if (f.imageHash) { body.imageHash = f.imageHash; }
       if (q) { body.position = q.position; }
       if (type === 'mc') {
         body.options = f.opts.map(function (o) { return o.value; });
@@ -796,13 +858,14 @@
         field('Set', f.set), field('Question id', f.id, 'Example: A_6 or Q3b. Cannot change later.'),
         field('Section', f.section), field('Type', f.type), field('Points', f.points)),
       h('div', { style: 'margin-top:12px' }, field('Question text', f.text)),
+      imageBox,
       h('div', { style: 'margin-top:12px' }, mcBox, shortBox, openBox),
-      q && q.imageHash ? h('div', { class: 'small muted' }, 'This question has an image attached; it is kept when you save.') : null,
       h('div', { class: 'toolbar', style: 'margin-top:14px' },
         h('button', { class: 'btn', id: 'qfSave', onclick: save }, 'Save'),
         h('button', { class: 'btn secondary', onclick: function () { mount(byId('view'), questionsList()); } }, 'Cancel'),
         editing ? h('button', { class: 'btn danger', id: 'qfDelete', onclick: remove }, 'Delete') : null));
     showType();
+    showImage();
     return form;
   }
 
@@ -983,6 +1046,30 @@
         status[id]);
     }
 
+    // Resend: marks graded attempts pending; the server's minute sweep sends them.
+    var mailClass = h('select', { id: 'mailClass' }, h('option', { value: '' }, 'All classes'),
+      exam.classOptions.map(function (c) { return h('option', { value: c }, c); }));
+    var mailSet = h('select', { id: 'mailSet' }, h('option', { value: '' }, 'All sets'),
+      ['A', 'B', 'C'].map(function (x) { return h('option', { value: x }, 'Set ' + x); }));
+    var mailStatus = h('div', { class: 'muted small', id: 'mailStatus', style: 'margin-top:8px' });
+    var mailCard = h('div', { class: 'card' },
+      h('h3', null, 'Resend result emails'),
+      h('p', { class: 'muted', style: 'margin-bottom:10px' },
+        'Queues the results email again for graded attempts. They go out a few per minute, and only after each ' +
+        "student's deadline has passed. Use it after a failed delivery or a corrected grade."),
+      h('div', { class: 'toolbar' }, mailClass, mailSet,
+        h('button', { class: 'btn', id: 'mailResend', onclick: function () {
+          if (!window.confirm('Queue the results email again for the selected students?')) { return; }
+          api('POST', base + '/resend-emails', { class: mailClass.value, set: mailSet.value }).then(function (d) {
+            mailStatus.textContent = d.queued + ' email(s) queued. They are sent within a few minutes.';
+            S.attempts = null;
+          }).catch(function (e) {
+            mailStatus.textContent = e.code === 'email_disabled'
+              ? 'Email is not configured on the server yet (MAIL_RELAY_URL).' : 'Failed: ' + e.message;
+          });
+        } }, 'Resend emails')),
+      mailStatus);
+
     var simBox = h('div', { id: 'simBox', class: 'muted' }, 'Loading...');
     var view = h('div', null,
       bulkCard('recalc', 'Recalculate grades',
@@ -992,6 +1079,7 @@
         'Re-marks every multiple-choice answer against the CURRENT answer key (use it after correcting a wrong key). ' +
         'Uses no AI; open-ended scores are untouched.', '/regrade-mc',
         'Re-mark all multiple-choice answers of this exam with the current key?'),
+      mailCard,
       h('div', { class: 'card' },
         h('h3', null, 'Similarity report'),
         h('p', { class: 'muted', style: 'margin-bottom:10px' },

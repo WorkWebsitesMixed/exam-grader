@@ -17,6 +17,19 @@ import { resetStudentCaches } from '../src/student.js';
 export const CLIENT_ID = 'test-client.apps.googleusercontent.com';
 export const ORIGIN = 'https://workwebsitesmixed.github.io';
 
+/** Minimal R2Bucket lookalike: put/get over a Map. */
+export class FakeR2 {
+  constructor() { this.objects = new Map(); }
+  async put(key, value, options = {}) {
+    this.objects.set(key, { bytes: new Uint8Array(value), httpMetadata: options.httpMetadata || {} });
+  }
+  async get(key) {
+    const o = this.objects.get(key);
+    if (!o) { return null; }
+    return { body: new Blob([o.bytes]).stream(), httpMetadata: o.httpMetadata };
+  }
+}
+
 /** Minimal D1Database lookalike backed by node:sqlite. */
 export class FakeD1 {
   constructor() {
@@ -74,12 +87,15 @@ export async function makeWorld({ modelReply } = {}) {
   const google = await makeGoogle(() => clock.t);
   const sent = [];       // queue messages
   const modelCalls = [];
+  const mails = [];      // messages delivered to the fake mail relay
+  const relay = { mode: 'ok' };   // 'ok' | 'error' | 'down'
 
   const env = {
     DB: new FakeD1(),
+    FILES: new FakeR2(),
     GRADE_QUEUE: { send: async (m) => { sent.push(m); } },
     GRADING_MODEL: 'claude-sonnet-5-5', GOOGLE_CLIENT_ID: CLIENT_ID, ALLOWED_EMAIL_DOMAIN: 'marymount.edu.co',
-    ALLOWED_ORIGINS: ORIGIN, SESSION_SECRET: 'test-session-secret', ANTHROPIC_API_KEY: 'test-key', MAIL_RELAY_URL: '',
+    ALLOWED_ORIGINS: ORIGIN, SESSION_SECRET: 'test-session-secret', ANTHROPIC_API_KEY: 'test-key', MAIL_RELAY_URL: '', MAIL_RELAY_KEY: 'relay-secret',
   };
 
   const deps = {
@@ -97,6 +113,14 @@ export async function makeWorld({ modelReply } = {}) {
         modelCalls.push({ system: body.system, user });
         const text = modelReply ? modelReply(body.system, user) : 'SCORE: 99\nFEEDBACK: Well done, a thorough answer.';
         return new Response(JSON.stringify({ content: [{ type: 'text', text }] }), { status: 200 });
+      }
+      if (String(url).startsWith('https://relay.test/')) {
+        if (relay.mode === 'down') { throw new Error('relay unreachable'); }
+        const body = JSON.parse(init.body);
+        if (body.key !== 'relay-secret') { return new Response(JSON.stringify({ success: false, error: 'bad key' })); }
+        if (relay.mode === 'error') { return new Response(JSON.stringify({ success: false, error: 'quota' })); }
+        mails.push(body);
+        return new Response(JSON.stringify({ success: true }));
       }
       throw new Error('unexpected fetch ' + url);
     },
@@ -125,7 +149,7 @@ export async function makeWorld({ modelReply } = {}) {
     return pending.length;
   }
 
-  return { env, deps, app, google, clock, sent, modelCalls, call, drainQueue };
+  return { env, deps, app, google, clock, sent, modelCalls, mails, relay, call, drainQueue };
 }
 
 /** Seeds one exam with the given questions (rows use admin-API field names). */
