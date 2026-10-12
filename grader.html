@@ -432,9 +432,9 @@
                 style="background:#FDEDEC; border-left:4px solid var(--error-color); padding:20px; border-radius:8px; margin-bottom:20px;">
                 <h3 style="color:var(--error-color); margin-bottom:10px; font-size:16px;">⚠️ ANTI-CHEATING SYSTEM ACTIVE
                 </h3>
-                <p style="font-size:14px; color:var(--text-main);">Leaving this browser tab will result in automatic
+                <p id="antiCheatIntro" style="font-size:14px; color:var(--text-main);">Leaving this browser tab will result in automatic
                     penalties applied to your final score:</p>
-                <ul
+                <ul id="antiCheatRules"
                     style="font-size:14px; margin-left:20px; margin-top:5px; color:var(--error-color); font-weight:bold;">
                     <li>1st Switch: Warning &amp; -1 Point Deduction</li>
                     <li>2nd Switch: Final Warning &amp; -3 Points Deduction</li>
@@ -494,7 +494,7 @@
             <div class="exam-header">
                 <div>
                     <h1 id="examHeaderTitle">Exam</h1>
-                    <div class="info">Set <span id="setDisplay"></span> | <span id="studentNameDisplay"></span></div>
+                    <div class="info">Set <span id="setDisplay"></span> | <span id="studentNameDisplay"></span><span id="integrityBadge"></span></div>
                 </div>
                 <div id="timer">60:00</div>
             </div>
@@ -613,6 +613,20 @@
         const params = new URLSearchParams(window.location.search);
         const appsScriptUrl = params.get('src') || '';
 
+        // Two backends can serve this page. The OLD one is the Apps Script web app
+        // (single POST endpoint with an `action` field). The NEW one is the
+        // Cloudflare Worker (REST paths under /api, server-side attempts and
+        // autosave). Which one is used follows the ?src= address, so a class can be
+        // moved to the new backend just by being handed a different link, and
+        // rolled back the same way. `&api=v3` forces the new one for a custom domain.
+        // `&exam=<id>` selects a specific exam on the new backend.
+        const examParam = params.get('exam') || '';
+        const BACKEND_V3 = (function () {
+            if (params.get('api') === 'v3') { return true; }
+            try { return /\.workers\.dev$/.test(new URL(appsScriptUrl).hostname); }
+            catch (e) { return false; }
+        })();
+
         const examConfig = { durationMinutes: 60, appsScriptUrl };
 
         const GRADE_BOUNDARIES = {
@@ -649,7 +663,10 @@
         var LOAD_RETRY_DELAYS = [1500, 3000, 6000, 10000];
 
         function fetchQuestionsJson() {
-            return fetch(appsScriptUrl + '?action=questions').then(function (r) {
+            var url = BACKEND_V3
+                ? apiBase() + '/api/exam' + (examParam ? '?exam=' + encodeURIComponent(examParam) : '')
+                : appsScriptUrl + '?action=questions';
+            return fetch(url).then(function (r) {
                 return r.text().then(function (t) {
                     try { return JSON.parse(t); }
                     catch (e) { throw new Error('non-JSON response (HTTP ' + r.status + ')'); }
@@ -659,6 +676,10 @@
 
         function loadQuestions(attempt) {
             fetchQuestionsJson().then(function (data) {
+                if (BACKEND_V3 && data.code === 'exam_not_found') {
+                    showLoadError('This exam was not found. Please check the link your teacher gave you.');
+                    return;
+                }
                 if (!(data.success && data.questions)) { throw new Error('bad payload'); }
                 onQuestionsLoaded(data);
             }).catch(function (err) {
@@ -677,6 +698,15 @@
 
         function onQuestionsLoaded(data) {
             questions = data.questions;
+            if (BACKEND_V3) { showRulesV3(); }
+            if (BACKEND_V3) {
+                // The Worker returns image addresses relative to itself (/img/<hash>).
+                ['A', 'B', 'C'].forEach(function (s) {
+                    (questions[s] || []).forEach(function (q) {
+                        if (q.imageUrl && q.imageUrl.charAt(0) === '/') { q.imageUrl = apiBase() + q.imageUrl; }
+                    });
+                });
+            }
             if (data.config) { applyConfig(data.config); }
             buildSetOptions();
             var ls = document.getElementById('loadingScreen');
@@ -928,6 +958,8 @@
             var btn = document.querySelector('#studentInfoScreen button.btn-primary');
             if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
 
+            if (BACKEND_V3) { startExamV3(fn, ln, cls, btn); return; }
+
             fetch(appsScriptUrl, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -977,6 +1009,7 @@
         }
 
         function saveAnswers() {
+            answersDirty = true;   // picked up by the 30-second autosave on the new backend
             if (!answersSessionKey) { return; }
             sessionStorage.setItem(answersSessionKey, JSON.stringify({
                 mc: answers.mc,
@@ -1049,6 +1082,7 @@
 
         // --- ANTI-CHEATING ---
         function enableAntiCheating() {
+            if (BACKEND_V3) { enableIntegrityV3(); return; }
             document.addEventListener('visibilitychange', function () {
                 if (!examActive || document.hidden === false) { return; }
                 tabSwitches++;
@@ -1077,6 +1111,7 @@
         var timerSessionKey = '';
 
         function startTimer() {
+            if (BACKEND_V3) { startTimerV3(); return; }
             var timerDisplay = document.getElementById('timer');
             var totalSeconds = examConfig.durationMinutes * 60;
             timerSessionKey  = 'exam_timer_' + currentEmail + '_' + selectedSet;
@@ -1158,6 +1193,7 @@
         }
 
         function submitExamImmediately() {
+            if (BACKEND_V3) { submitExamV3(); return; }
             if (timerSessionKey)   { sessionStorage.removeItem(timerSessionKey); }
             if (answersSessionKey) { sessionStorage.removeItem(answersSessionKey); }
             examActive = false;
@@ -1302,6 +1338,442 @@
             tr.appendChild(tdFb);
             tr.appendChild(tdAns);
             tbody.appendChild(tr);
+        }
+
+        // =====================================================================
+        // NEW BACKEND (Cloudflare Worker) -- everything below runs only when
+        // BACKEND_V3 is true. The old Apps Script path above is unchanged.
+        //
+        // Differences in how the exam behaves, all decided server-side:
+        //   * the server creates the attempt at start and returns the paper
+        //     (which questions, which option order) and the deadline;
+        //   * answers are autosaved every 30 s, so a crash or a reload loses
+        //     almost nothing and the same attempt resumes;
+        //   * the timer runs against the SERVER's deadline, not a local clock;
+        //   * results are released by the server only after the deadline.
+        // =====================================================================
+        var attemptId = '';
+        var deadlineMs = 0;            // deadline expressed on THIS computer's clock
+        var answersDirty = false;      // true when answers changed since the last autosave
+        var autosaveTimer = null;
+        var resultPolling = false;
+        var AUTOSAVE_MS = 30000;
+
+        function apiBase() { return appsScriptUrl.replace(/\/$/, ''); }
+
+        // text/plain keeps these "simple" requests (no CORS preflight), like the old POSTs.
+        function v3Post(path, payload) {
+            return fetch(apiBase() + path, { method: 'POST', body: JSON.stringify(payload) })
+                .then(function (r) { return r.json(); });
+        }
+        function v3Get(path) {
+            return fetch(apiBase() + path).then(function (r) { return r.json(); });
+        }
+
+        // Page state -> what the server stores. Multiple choice goes as the index of
+        // the option in the PRINTED order (not the shuffled screen position), so the
+        // server compares numbers instead of option text.
+        function answersForServer() {
+            var out = {};
+            (questions[selectedSet] || []).forEach(function (q) {
+                if (q.type === 'mc') {
+                    var letter = answers.mc[q.id];
+                    if (letter) {
+                        var printed = q.shuffled[letter.charCodeAt(0) - 65];
+                        if (typeof printed === 'number') { out[q.id] = printed; }
+                    }
+                } else {
+                    var text = answers.openEnded[q.id];
+                    if (typeof text === 'string' && text) { out[q.id] = text; }
+                }
+            });
+            return out;
+        }
+
+        // Server answers -> page controls (used when an attempt is resumed).
+        function applyServerAnswers(saved) {
+            (questions[selectedSet] || []).forEach(function (q) {
+                var v = saved ? saved[q.id] : undefined;
+                if (v === undefined || v === null) { return; }
+                if (q.type === 'mc') {
+                    var di = q.shuffled.indexOf(v);
+                    if (di < 0) { return; }
+                    var letter = String.fromCharCode(65 + di);
+                    var radio = document.querySelector('input[name="' + q.id + '"][value="' + letter + '"]');
+                    if (radio) { radio.checked = true; answers.mc[q.id] = letter; }
+                } else {
+                    var el = document.querySelector('[data-qid="' + q.id + '"]');
+                    if (el) { el.value = v; answers.openEnded[q.id] = v; }
+                }
+            });
+        }
+
+        function startExamV3(fn, ln, cls, btn) {
+            function reset() { if (btn) { btn.disabled = false; btn.textContent = 'I Understand \u2014 Start Exam'; } }
+
+            v3Post('/api/start', {
+                idToken: currentIdToken, exam: examParam, set: selectedSet,
+                firstName: fn, lastName: ln, 'class': cls
+            }).then(function (data) {
+                if (data.duplicate) {
+                    document.getElementById('studentInfoScreen').classList.remove('active');
+                    document.getElementById('dupeName').textContent = fn + ' ' + ln;
+                    document.getElementById('dupeSet').textContent = selectedSet;
+                    document.getElementById('duplicateScreen').style.display = 'block';
+                    return;
+                }
+                if (!data.success) {
+                    reset();
+                    if (data.code === 'token_expired') {
+                        alert('Your Google sign-in expired. Please refresh the page and sign in again.');
+                    } else if (data.code === 'exam_closed') {
+                        document.getElementById('studentInfoScreen').classList.remove('active');
+                        document.getElementById('examClosedScreen').style.display = 'block';
+                    } else {
+                        alert((data.error || 'Could not start the exam.') + ' If this keeps happening, tell your teacher.');
+                    }
+                    return;
+                }
+
+                attemptId = data.attemptId;
+                // Express the server's deadline on this computer's clock, so a wrong
+                // local clock cannot give extra time or take it away.
+                deadlineMs = data.deadlineAt - (data.serverNow - Date.now());
+
+                // Keep only the questions this student was served, in the served order,
+                // with the served option order attached (the same shape the old
+                // backend sent as `shuffled`).
+                var byId = {};
+                (questions[selectedSet] || []).forEach(function (q) { byId[q.id] = q; });
+                var paper = [];
+                data.paper.qids.forEach(function (qid) {
+                    var q = byId[qid];
+                    if (!q) { return; }
+                    var copy = Object.assign({}, q);
+                    if (q.type === 'mc') { copy.shuffled = (data.paper.optionOrder && data.paper.optionOrder[qid]) || [0, 1, 2, 3]; }
+                    paper.push(copy);
+                });
+                questions[selectedSet] = paper;
+
+                // Continue the same strikes after a reload (the server holds the log).
+                var ig = data.integrity || {};
+                integ.events = []; integ.flushedUpTo = 0;
+                integ.seq = ig.eventsCount || 0;
+                integ.seen = ig.seen || {};
+                integ.faults = ig.faults || 0;
+                integ.warnings = ig.warnings || 0;
+                updateIntegrityBadge();
+
+                document.getElementById('studentInfoScreen').classList.remove('active');
+                document.getElementById('examContainer').classList.add('active');
+                document.getElementById('setDisplay').textContent = selectedSet;
+                document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
+
+                answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
+                renderQuestions();
+                applyServerAnswers(data.answers);   // what the server has (maybe from another computer)
+                restoreAnswers();                   // then anything newer saved in this browser
+                examActive = true;
+                examStartTime = Date.now();
+                startTimer();
+                enableAntiCheating();
+                startAutosave();
+                // A resumed attempt that already reached the limit is closed at once.
+                if (ig.autoSubmit) { submitExamImmediately(); }
+            }).catch(function () {
+                reset();
+                alert('Could not reach the server. Check your connection and try again.');
+            });
+        }
+
+        function startAutosave() {
+            stopAutosave();
+            autosaveTimer = setInterval(function () { autosaveNow(false); }, AUTOSAVE_MS);
+        }
+        function stopAutosave() {
+            if (autosaveTimer) { clearInterval(autosaveTimer); autosaveTimer = null; }
+        }
+
+        // Sends the current answers and any integrity events not yet stored, when
+        // something changed (or when forced). A failed attempt just re-arms the
+        // flag, so the next tick tries again. Events are re-sent safely: the server
+        // ignores a sequence number it already has.
+        function autosaveNow(force) {
+            if (!BACKEND_V3 || !examActive || !attemptId) { return; }
+            var pending = integ.events.length - integ.flushedUpTo;
+            if (!answersDirty && !force && pending === 0) { return; }
+            answersDirty = false;
+            var sentUpTo = integ.events.length;
+            v3Post('/api/save', { attemptId: attemptId, answers: answersForServer(),
+                                  events: integ.events.slice(integ.flushedUpTo) })
+                .then(function (d) {
+                    if (d.success) {
+                        integ.flushedUpTo = Math.max(integ.flushedUpTo, sentUpTo);
+                        // The server counts the faults itself and may close the exam.
+                        if (d.autoSubmitted && !examSubmitted) { submitExamImmediately(); }
+                    } else if (d.code === 'already_submitted') {
+                        if (!examSubmitted) { submitExamImmediately(); }
+                    } else if (d.code !== 'deadline_passed') {
+                        answersDirty = true;
+                    }
+                })
+                .catch(function () { answersDirty = true; });
+        }
+
+        // ---------------------------------------------------------------
+        // Integrity rules (new backend). The browser reports EVENTS; the server
+        // decides faults and points from them (src/integrity.js). The same rules
+        // are applied here only so the student is told at the moment it happens.
+        //   copy / cut / paste / drag text : always a fault (and it is blocked)
+        //   leave the tab / minimise       : 1st warning, then faults
+        //   window shrunk or snapped to a
+        //   side (narrower than 75% of the
+        //   screen: split screen)          : 1st warning, then faults
+        // Losing focus to another window is deliberately NOT watched: school
+        // computers have one screen, and teacher tools such as Veyon can take
+        // focus without the student doing anything.
+        //   right click                    : 1st warning, then faults (blocked)
+        // Warnings never count; the 3rd fault submits the exam. Each fault is
+        // worth 1 point.
+        // ---------------------------------------------------------------
+        var INTEGRITY = {
+            FAULT_POINTS: 1, MAX_FAULTS: 3, SPLIT_WIDTH_RATIO: 0.75,
+            CATEGORY: { away: 'tab', resize: 'window', contextmenu: 'menu',
+                        copy: 'clip', cut: 'clip', paste: 'clip', drop: 'clip' },
+            LABEL: {
+                away: 'You left the exam tab',
+                resize: 'The exam window was shrunk (split screen)',
+                contextmenu: 'Right-click is not allowed during the exam',
+                copy: 'Copying text is not allowed during the exam',
+                cut: 'Cutting text is not allowed during the exam',
+                paste: 'Pasting text is not allowed during the exam',
+                drop: 'Dragging text into the exam is not allowed'
+            }
+        };
+        var integ = { events: [], seq: 0, flushedUpTo: 0, seen: {}, faults: 0, warnings: 0,
+                      awayStart: 0, resizeSplit: false,
+                      flushTimer: null, enabled: false };
+
+        function showRulesV3() {
+            var intro = document.getElementById('antiCheatIntro');
+            var list = document.getElementById('antiCheatRules');
+            if (intro) { intro.textContent = 'The exam watches for the following. Each penalty costs ' +
+                INTEGRITY.FAULT_POINTS + ' point:'; }
+            if (list) {
+                list.innerHTML =
+                    '<li>Copying, cutting, pasting or dragging text: penalty every time (it is also blocked)</li>' +
+                    '<li>Leaving the exam tab or window: first time a warning, then a penalty</li>' +
+                    '<li>Shrinking the exam window or putting another window beside it (split screen): first time a warning, then a penalty</li>' +
+                    '<li>Right-click: first time a warning, then a penalty</li>' +
+                    '<li>Warnings do not count. The ' + INTEGRITY.MAX_FAULTS + 'rd penalty submits your exam automatically</li>';
+            }
+        }
+
+        function updateIntegrityBadge() {
+            var el = document.getElementById('integrityBadge');
+            if (!BACKEND_V3 || !el) { return; }
+            el.textContent = ' | Warnings: ' + integ.warnings + ' \u00b7 Penalties: ' + integ.faults + '/' + INTEGRITY.MAX_FAULTS;
+        }
+
+        // Records one event, applies the rules locally, tells the student, and
+        // schedules the report to the server.
+        function recordIntegrity(type, extra) {
+            if (!examActive) { return; }
+            var ev = { seq: integ.seq++, t: Date.now(), type: type };
+            if (extra) { Object.keys(extra).forEach(function (k) { ev[k] = extra[k]; }); }
+            integ.events.push(ev);
+
+            var cat = INTEGRITY.CATEGORY[type];
+            if (cat) {
+                var outcome;
+                if (cat === 'clip') { outcome = 'fault'; }
+                else if (!integ.seen[cat]) { integ.seen[cat] = true; outcome = 'warning'; }
+                else { outcome = 'fault'; }
+                if (outcome === 'fault') { integ.faults++; } else { integ.warnings++; }
+
+                var label = INTEGRITY.LABEL[type];
+                if (outcome === 'warning') {
+                    showWarning('\u26A0\uFE0F Warning: ' + label + '. There is no penalty this time, but the next time it costs ' +
+                        INTEGRITY.FAULT_POINTS + ' point.');
+                } else {
+                    showWarning('\uD83D\uDEA8 Penalty: -' + INTEGRITY.FAULT_POINTS + ' point. ' + label + '. Penalties: ' +
+                        integ.faults + ' of ' + INTEGRITY.MAX_FAULTS + '. ' +
+                        (integ.faults >= INTEGRITY.MAX_FAULTS
+                            ? 'Your exam is being submitted now.'
+                            : 'At ' + INTEGRITY.MAX_FAULTS + ' penalties your exam is submitted automatically.'));
+                }
+            }
+            updateIntegrityBadge();
+            scheduleIntegrityFlush();
+            if (integ.faults >= INTEGRITY.MAX_FAULTS && !examSubmitted) { submitExamImmediately(); }
+        }
+
+        // Debounced so a burst of events (e.g. repeated paste) is one request.
+        function scheduleIntegrityFlush() {
+            if (integ.flushTimer) { return; }
+            integ.flushTimer = setTimeout(function () { integ.flushTimer = null; autosaveNow(true); }, 400);
+        }
+
+        function enableIntegrityV3() {
+            if (integ.enabled) { return; }
+            integ.enabled = true;
+
+            // Tab hidden or window minimised.
+            document.addEventListener('visibilitychange', function () {
+                if (!examActive) { return; }
+                if (document.hidden) {
+                    integ.awayStart = Date.now();
+                    recordIntegrity('away');
+                } else if (integ.awayStart) {
+                    recordIntegrity('back', { ms: Date.now() - integ.awayStart, of: 'away' });
+                    integ.awayStart = 0;
+                }
+            });
+
+            // Window snapped or shrunk to a fraction of the screen. Width only:
+            // phone keyboards change the height and must not count.
+            window.addEventListener('resize', function () {
+                if (!examActive) { return; }
+                var narrow = window.outerWidth > 0 && window.screen && window.screen.availWidth > 0 &&
+                    window.outerWidth < window.screen.availWidth * INTEGRITY.SPLIT_WIDTH_RATIO;
+                if (narrow && !integ.resizeSplit) { integ.resizeSplit = true; recordIntegrity('resize'); }
+                else if (!narrow) { integ.resizeSplit = false; }
+            });
+
+            // Right click, copy, cut, paste, drag-drop: blocked AND recorded.
+            // Capture phase so nothing inside the page can swallow them first.
+            document.addEventListener('contextmenu', function (e) {
+                if (!examActive) { return; }
+                e.preventDefault();
+                recordIntegrity('contextmenu');
+            }, true);
+            ['copy', 'cut'].forEach(function (type) {
+                document.addEventListener(type, function (e) {
+                    if (!examActive) { return; }
+                    e.preventDefault();
+                    recordIntegrity(type);
+                }, true);
+            });
+            document.addEventListener('paste', function (e) {
+                if (!examActive) { return; }
+                var len = 0;
+                try { len = ((e.clipboardData && e.clipboardData.getData('text')) || '').length; } catch (x) { len = 0; }
+                e.preventDefault();
+                recordIntegrity('paste', { len: len });
+            }, true);
+            document.addEventListener('dragover', function (e) { if (examActive) { e.preventDefault(); } }, true);
+            document.addEventListener('drop', function (e) {
+                if (!examActive) { return; }
+                var len = 0;
+                try { len = ((e.dataTransfer && e.dataTransfer.getData('text')) || '').length; } catch (x) { len = 0; }
+                e.preventDefault();
+                recordIntegrity('drop', { len: len });
+            }, true);
+
+            // Evidence only (no penalty): a sudden large jump in one answer box
+            // that was not a paste (autofill, dictation, a script).
+            document.addEventListener('focusin', function (e) {
+                var t = e.target;
+                if (t && typeof t.value === 'string') { t.__prevLen = t.value.length; }
+            }, true);
+            document.addEventListener('input', function (e) {
+                if (!examActive) { return; }
+                var t = e.target;
+                if (!t || typeof t.value !== 'string') { return; }
+                var jump = t.value.length - (t.__prevLen || 0);
+                t.__prevLen = t.value.length;
+                if (jump > 80) { recordIntegrity('bulk_input', { len: jump }); }
+            }, true);
+        }
+
+        function startTimerV3() {
+            var timerDisplay = document.getElementById('timer');
+            var warned5 = false;
+            var warned1 = false;
+            function tick() {
+                var remaining = Math.floor((deadlineMs - Date.now()) / 1000);
+                if (remaining <= 0) {
+                    timerDisplay.textContent = '00:00';
+                    if (!examSubmitted) { submitExamImmediately(); }
+                    else { pollResultV3(); }
+                    return;
+                }
+                timerDisplay.textContent =
+                    String(Math.floor(remaining / 60)).padStart(2, '0') + ':' +
+                    String(remaining % 60).padStart(2, '0');
+                if (!warned5 && remaining <= 300) {
+                    warned5 = true;
+                    timerDisplay.classList.add('warning');
+                    showNotification('\u23F0 5 minutes remaining!');
+                }
+                if (!warned1 && remaining <= 60) {
+                    warned1 = true;
+                    timerDisplay.classList.add('critical');
+                    showNotification('\uD83D\uDEA8 1 minute remaining - Wrap it up!', true);
+                }
+                setTimeout(tick, 500);
+            }
+            tick();
+        }
+
+        // Final submit. Retries with growing pauses: the answers are already
+        // autosaved and the server also submits an expired attempt by itself, so
+        // a flaky connection must not make the student think the exam was lost.
+        function submitExamV3() {
+            if (examSubmitted) { return; }
+            stopAutosave();
+            examActive = false;
+            examSubmitted = true;
+            closeWarningModal();
+            document.getElementById('examContainer').classList.remove('active');
+            document.getElementById('waitingScreen').classList.add('active');
+            var msgEl = document.getElementById('waitingMsg');
+            msgEl.textContent = 'Submitting your answers...';
+
+            var tries = 0;
+            function send() {
+                v3Post('/api/submit', { attemptId: attemptId, answers: answersForServer(),
+                                        events: integ.events.slice(integ.flushedUpTo) })
+                    .then(function (data) {
+                        if (!data.success) { throw new Error(data.code || 'submit failed'); }
+                        if (answersSessionKey) { sessionStorage.removeItem(answersSessionKey); }
+                        if (Date.now() >= deadlineMs) { pollResultV3(); }
+                        else { msgEl.textContent = 'Exam submitted! Results will appear when time is up.'; }
+                    })
+                    .catch(function () {
+                        tries++;
+                        if (tries >= 20) {
+                            msgEl.textContent = 'We could not confirm your submission. Your answers were saved automatically. ' +
+                                'Please tell your teacher before leaving.';
+                            return;
+                        }
+                        msgEl.textContent = 'Could not reach the server. Your answers are saved. Retrying (' + tries + ')...';
+                        setTimeout(send, Math.min(30000, 3000 * tries));
+                    });
+            }
+            send();
+        }
+
+        // After the deadline, ask the server for the result until it is graded.
+        function pollResultV3() {
+            if (resultPolling) { return; }
+            resultPolling = true;
+            var msgEl = document.getElementById('waitingMsg');
+            document.getElementById('examContainer').classList.remove('active');
+            document.getElementById('waitingScreen').classList.add('active');
+            msgEl.textContent = 'Time is up. Grading in progress, please wait...';
+            (function poll() {
+                v3Get('/api/result?attemptId=' + encodeURIComponent(attemptId))
+                    .then(function (data) {
+                        if (data.success && data.ready) { resultPolling = false; showResults(data); return; }
+                        if (data.status === 'error') {
+                            msgEl.textContent = 'Your exam was received, but grading hit a problem. ' +
+                                'Your teacher will release your result.';
+                        }
+                        setTimeout(poll, 4000);
+                    })
+                    .catch(function () { setTimeout(poll, 6000); });
+            })();
         }
 
         function escapeHtml(text) {

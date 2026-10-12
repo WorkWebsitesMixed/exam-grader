@@ -1,6 +1,8 @@
 # Exam Grader on Cloudflare — API and behaviour specification
 
-**Status:** design proposal for review, 2026-10-10. No backend code exists yet. Companion file: `schema.sql`.
+**Status:** design for review (2026-10-10); slice 1 of the code (student flow, grading, queue, core admin) is built and tested locally, not deployed. See `README.md` for what is implemented. Companion file: `schema.sql`.
+
+Spec changes made while building (all in the direction of the original rules): the tab-switch penalty is derived server-side from `tab_switches` (1 switch = 1 point, 2 or more = 4) instead of trusting the client's value; `reset` is an alias of delete; bulk recalculate/regrade work in chunks of 40 with a `nextAfterId` cursor because of D1's 50-queries-per-invocation limit.
 Replaces `Code.gs` (Apps Script). The frontend stays on GitHub Pages and finds the backend through `?src=<worker base url>`.
 
 ## 1. Platform
@@ -54,9 +56,27 @@ Free-plan numbers this relies on (official pages, fetched 2026-10-08): Workers 1
 2. MC: compare the submitted printed-order index with `correct_index` (no text matching).
 3. Short: normalized exact match against `accepted_answers`; on miss, one AI call with the same prompt as `gradeShortWithAI_`.
 4. openEnded: Claude call with the rubric, model **`claude-sonnet-5-5`** (configurable variable), up to 3 retries on 429/5xx using queue `retry({delaySeconds})`, not `sleep`.
-5. `penalty = clamp(client penalty, 0, 4)`, `tab_switches = clamp(…, 0, 10)`; score after penalty floored at 0; percentage and grade via the same boundary logic as `calculateGrade` in Code.gs (port with unit tests against known rows).
+5. `penalty` comes from the integrity log (section 5b), never from a number the browser sends; score after penalty floored at 0; percentage and grade via the same boundary logic as `calculateGrade` in Code.gs (port with unit tests against known rows).
 6. Write `results`, scores, `status='graded'`. Failures set `status='error'` + `grading_error`; the sweep retries.
 7. If the student's email is verified and email is enabled, set `email_status='pending'` and enqueue a relay message (§8).
+
+## 5b. Integrity (anti-cheating) and similarity — decided 2026-10-12
+
+The browser reports **events**; the server derives faults and points (`src/integrity.js`).
+
+| Event | Category | Rule |
+|---|---|---|
+| `copy`, `cut`, `paste`, `drop` | clipboard | fault at once, no warning; the action is also blocked in the page |
+| `away` (tab hidden, minimised) | tab | first time a warning, then faults |
+| `resize` (window narrower than 75% of the screen width: split screen on one monitor) | window | first time a warning, then faults. (`unfocus`, focus lost to another window, is still accepted by the server but the page no longer sends it: school computers have one screen and Veyon can take focus.) |
+| `contextmenu` (right click) | menu | first time a warning, then faults; the menu is blocked |
+| `back`, `bulk_input` | evidence | never a warning or a fault |
+
+Each warning category has its own first warning. Warnings never count. Each fault costs **1 point** (`FAULT_POINTS`). The **3rd fault submits the exam**: the server does it itself when it receives the third fault in a `/api/save`, so a page that ignores the order cannot keep working. Events are append-only and idempotent (a re-sent `seq` is ignored); at most 300 are kept. An older cached page that only sends `tabSwitches` is converted to `away` events and ruled the same way.
+
+Stored per attempt: `events` (the evidence), plus `faults`, `warnings`, `away_ms`, `paste_events`, `paste_chars`. `/api/admin/attempts/:id` returns the annotated timeline.
+
+**Similarity report** (`POST/GET /api/admin/exams/:id/similarity`): computed in the queue consumer by `src/similarity.js`, with no AI model, so it costs no tokens. Open-ended answers of 25+ words are compared by overlap of 3-word phrases (phrases from the question itself are ignored); multiple choice by identical WRONG answers. A flagged pair is a reason to read both papers, not proof. Students on different sets are never compared; at most 150 graded attempts per exam.
 
 Cron sweep (every minute): (a) `started` attempts past `deadline_at + 60 s` that have saved answers → mark `submitted` and enqueue (this is what rescues a student who closed the tab); (b) `grading` older than 10 min → re-enqueue; (c) `email_status='pending'` older than 10 min → re-enqueue.
 

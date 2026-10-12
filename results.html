@@ -325,6 +325,14 @@
         var params = new URLSearchParams(window.location.search);
         var appsScriptUrl = params.get('src') || '';
 
+        // Same rule as grader.html: an address ending in .workers.dev (or &api=v3)
+        // is the new Cloudflare backend; anything else is the old Apps Script one.
+        var BACKEND_V3 = (function () {
+            if (params.get('api') === 'v3') { return true; }
+            try { return /\.workers\.dev$/.test(new URL(appsScriptUrl).hostname); }
+            catch (e) { return false; }
+        })();
+
         // Replace with your OAuth 2.0 client ID — same as grader.html
         var GOOGLE_CLIENT_ID = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
 
@@ -385,7 +393,10 @@
         }
 
         function loadResults(idToken, email, firstName, lastName) {
-            fetch(appsScriptUrl, {
+            // New backend: POST <base>/api/myresults. The server only returns exams
+            // that are graded AND whose time limit has ended.
+            var url = BACKEND_V3 ? appsScriptUrl.replace(/\/$/, '') + '/api/myresults' : appsScriptUrl;
+            fetch(url, {
                 method: 'POST',
                 body: JSON.stringify({ action: 'myresults', idToken: idToken })
             })
@@ -394,8 +405,15 @@
                     document.getElementById('loadingScreen').style.display = 'none';
 
                     if (!data.success || !data.submissions || data.submissions.length === 0) {
-                        document.getElementById('emptyMsg').textContent =
-                            'No submissions were found for ' + email + '. If you have taken an exam, contact your teacher.';
+                        var msg = 'No submissions were found for ' + email + '. If you have taken an exam, contact your teacher.';
+                        if (BACKEND_V3 && data.code === 'token_expired') {
+                            msg = 'Your Google sign-in expired. Please refresh the page and sign in again.';
+                        } else if (BACKEND_V3 && data.code === 'wrong_domain') {
+                            msg = 'Please sign in with your school Google account.';
+                        } else if (BACKEND_V3 && data.success) {
+                            msg += ' Results appear here once the exam time has ended and grading is finished.';
+                        }
+                        document.getElementById('emptyMsg').textContent = msg;
                         document.getElementById('emptyScreen').style.display = 'block';
                         return;
                     }

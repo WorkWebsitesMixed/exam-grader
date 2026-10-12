@@ -1,0 +1,56 @@
+# wrangler.toml -- configuration of the real exam-grader Worker.
+#
+# STATUS: not deployed. The resource ids below are placeholders until the
+# resources are created (commands in README.md). Secrets are NEVER written
+# here; set them with `npx wrangler secret put <NAME>`:
+#   ANTHROPIC_API_KEY   grading (Claude)
+#   SESSION_SECRET      signs admin sessions (any long random string)
+#   EXPORT_KEY          lets the Sheets-archive trigger / Pi backup read exports
+#   MAIL_RELAY_KEY      shared secret with the Apps Script email relay
+
+name = "examgrader-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Explicit so deploys stop warning: the API is reachable at the workers.dev URL,
+# but per-version Preview URLs (extra public hostnames serving the same secrets)
+# are turned off.
+workers_dev = true
+preview_urls = false
+
+[vars]
+# Model used for grading open-ended and ambiguous short answers.
+GRADING_MODEL = "claude-sonnet-5-5"
+# Same OAuth client the frontend already uses for Google Sign-In.
+GOOGLE_CLIENT_ID = "878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com"
+# Students must belong to this Google Workspace domain (`hd` claim + email suffix).
+ALLOWED_EMAIL_DOMAIN = "marymount.edu.co"
+# Browser origins allowed to call the API (comma separated).
+ALLOWED_ORIGINS = "https://workwebsitesmixed.github.io,http://localhost:8000"
+# Apps Script web-app URL that sends results email (best effort). Empty = no email.
+MAIL_RELAY_URL = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "examgrader"
+database_id = "dcf91992-4ec2-40e0-baca-8ab34b9b5426"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "exam-files"
+
+# Grading queue: one message per submission. One message per invocation and at
+# most 5 invocations at once keeps us far below Anthropic's per-minute limits.
+[[queues.producers]]
+binding = "GRADE_QUEUE"
+queue = "examgrader-grading"
+
+[[queues.consumers]]
+queue = "examgrader-grading"
+max_batch_size = 1
+max_concurrency = 5
+max_retries = 5
+
+# Sweep every minute: submit expired attempts, re-enqueue stuck ones.
+[triggers]
+crons = ["* * * * *"]

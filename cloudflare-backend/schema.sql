@@ -144,6 +144,15 @@ CREATE TABLE IF NOT EXISTS attempts (
   grading_error TEXT,
   email_status  TEXT NOT NULL DEFAULT 'none'
                 CHECK (email_status IN ('none','pending','sent','failed')),
+  -- Integrity log (src/integrity.js). `events` is the evidence the browser
+  -- reported (left tab, lost focus, right click, copy, paste...). The numeric
+  -- columns are derived from it on every save so lists need not parse JSON.
+  events        TEXT NOT NULL DEFAULT '[]',
+  faults        INTEGER NOT NULL DEFAULT 0,          -- counted violations (3 = auto-submit)
+  warnings      INTEGER NOT NULL DEFAULT 0,          -- first-time warnings (no penalty)
+  away_ms       INTEGER NOT NULL DEFAULT 0,          -- total time away from the exam
+  paste_events  INTEGER NOT NULL DEFAULT 0,
+  paste_chars   INTEGER NOT NULL DEFAULT 0,
   UNIQUE (exam_id, email, set_id)                    -- the one-attempt guard, atomic
 );
 -- Cron sweep: find expired 'started' attempts and stuck 'grading' ones.
@@ -168,4 +177,17 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- similarity_reports: result of comparing the answers of one exam's students
+-- (open-ended text overlap and shared wrong multiple-choice answers). Computed
+-- in the queue consumer, never by a model, so it costs no tokens.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS similarity_reports (
+  exam_id     TEXT PRIMARY KEY REFERENCES exams(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','done','error')),
+  computed_at INTEGER,
+  output      TEXT,                                  -- JSON report
+  error       TEXT
 );

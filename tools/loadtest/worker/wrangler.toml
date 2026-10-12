@@ -1,0 +1,28 @@
+# wrangler.toml -- configuration for the THROWAWAY load-test Worker.
+#
+# What this is: a minimal Cloudflare Worker used only to answer two questions
+# before we rewrite the exam backend:
+#   1. Can the free plan absorb 60 students starting at the same moment?
+#   2. Can the school lab's network reach a *.workers.dev address at all?
+# It is NOT the real backend and holds no exam data, no secrets and no real
+# student information. Delete it (and its D1 database) when the tests are done.
+#
+# How to deploy (you run these yourself; nothing here touches production):
+#   cd tools/loadtest/worker
+#   npx wrangler login
+#   npx wrangler d1 create examgrader-loadtest      # prints a database_id
+#   (paste that id below, replacing PASTE_ID_FROM_wrangler_d1_create)
+#   npx wrangler d1 execute examgrader-loadtest --remote --file=schema.sql
+#   npx wrangler deploy                              # prints the *.workers.dev URL
+
+name = "examgrader-loadtest"
+main = "src/index.js"
+
+# Pins the Workers runtime behaviour to a fixed date so results are repeatable.
+compatibility_date = "2026-10-01"
+
+# D1 = Cloudflare's SQLite database. The Worker reaches it through env.DB.
+[[d1_databases]]
+binding = "DB"
+database_name = "examgrader-loadtest"
+database_id = "f87eb99e-49f2-4e2e-8403-53cf59c67558"
