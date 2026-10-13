@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<!--
+  admin3.html -- teacher admin panel for the Cloudflare backend (v3).
+
+  What it is: a single self-contained page (no build step, no framework) that
+  talks to the Worker's /api/admin/* routes. It replaces admin.html, which
+  still serves the old Apps Script backend and is left untouched until the
+  cutover is done.
+
+  How it fits in:
+    - Sign-in: Google Sign-In gives an ID token; POST /api/admin/login swaps it
+      for an 8-hour session issued by the Worker, but only if the email is in
+      the `teachers` table. The session is kept in sessionStorage (closing the
+      tab signs out) and sent as `Authorization: Bearer <session>`.
+    - Views: Attempts (with the integrity columns), Questions (CRUD, image upload, import
+    from PDF with marking-scheme reading), Settings,
+      Tools (recalculate, regrade multiple choice, similarity report), Teachers.
+    - Safety rule for this file: anything that comes from a student or from the
+      database (names, answers, question text) is put on the page with
+      textContent only, never innerHTML. That is what the `h()` builder does.
+
+  Not here yet (they need backend pieces that are not built): export.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exam Admin v3</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  /* Same palette as admin.html so the two panels feel like the same tool. */
+  :root {
+    --primary: #1F4E78; --secondary: #27AE60; --error: #E74C3C; --warning: #F39C12;
+    --bg: #F8FAFC; --surface: #FFFFFF; --text: #0F172A; --muted: #64748B; --border: #E2E8F0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+  button { font: inherit; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  .topbar { background: linear-gradient(135deg, var(--primary), #2E75B6); color: #fff; padding: 14px 24px;
+            display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 20px; }
+  .topbar .sub { font-size: 13px; opacity: .8; margin-top: 2px; }
+  .topbar .who { font-size: 13px; display: flex; gap: 12px; align-items: center; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  /* Sign-in card */
+  .signin { max-width: 380px; margin: 80px auto; background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 32px; text-align: center; }
+  .signin h2 { margin-bottom: 8px; }
+  .signin p { color: var(--muted); margin-bottom: 20px; }
+  #signinBtn { display: flex; justify-content: center; }
+
+  /* Exam bar and tabs */
+  .exambar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .exambar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); min-width: 260px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
+  .tab { background: none; border: none; padding: 10px 16px; color: var(--muted); border-bottom: 3px solid transparent;
+         margin-bottom: -2px; font-weight: 600; }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  /* Buttons */
+  .btn { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--primary); background: var(--primary); color: #fff; font-weight: 600; }
+  .btn.secondary { background: var(--surface); color: var(--primary); }
+  .btn.danger { background: var(--error); border-color: var(--error); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  /* Pills and badges */
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+  .pill.open { background: #D1FAE5; color: #065F46; }
+  .pill.closed { background: #E2E8F0; color: #334155; }
+  .pill.fault { background: #FEE2E2; color: #B91C1C; }
+  .pill.warn { background: #FEF3C7; color: #92400E; }
+  .pill.ok { background: #D1FAE5; color: #065F46; }
+  .pill.err { background: #FEE2E2; color: #B91C1C; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+
+  /* Cards, stats, forms, tables */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .card h3 { margin-bottom: 10px; font-size: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center; }
+  .stat .v { font-size: 24px; font-weight: bold; color: var(--primary); }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  input[type=text], input[type=number], input[type=search], select, textarea {
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; background: var(--surface); }
+  textarea { width: 100%; min-height: 90px; resize: vertical; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 700; }
+  .field input[type=text], .field input[type=number], .field select { width: 100%; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .check { display: flex; gap: 8px; align-items: center; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden;
+          box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  thead th { background: var(--primary); color: #fff; padding: 10px 12px; text-align: left; white-space: nowrap; font-size: 13px; }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:nth-child(even) { background: var(--bg); }
+  tbody tr.click:hover { background: #EBF4FF; cursor: pointer; }
+  .pre { white-space: pre-wrap; word-break: break-word; }
+  .answer { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 6px 0; }
+  .qcard { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+           border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .qcard.right { border-left-color: var(--secondary); }
+  .qcard.wrong { border-left-color: var(--error); }
+  .qhead { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-weight: 700; }
+  .msg { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+  .msg.err { background: #FEE2E2; color: #B91C1C; }
+  .msg.okmsg { background: #D1FAE5; color: #065F46; }
+  .msg.info { background: #E0F2FE; color: #075985; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>Exam Admin</h1>
+    <div class="sub">Cloudflare backend</div>
+  </div>
+  <div class="who hidden" id="who">
+    <span id="whoEmail"></span>
+    <button class="btn secondary small" id="signOutBtn">Sign out</button>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Shown until a session exists -->
+  <div class="signin" id="signinCard">
+    <h2>Teacher sign-in</h2>
+    <p>Use your school Google account. Only accounts on the teachers list can enter.</p>
+    <div id="signinBtn"></div>
+    <div class="msg err hidden" id="signinError" style="margin-top:16px"></div>
+  </div>
+
+  <!-- Shown once signed in -->
+  <div id="app" class="hidden">
+    <div id="banner"></div>
+    <div class="exambar" id="exambar"></div>
+    <div class="tabs" id="tabs"></div>
+    <div id="view"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Configuration
+  // ---------------------------------------------------------------------------
+  var GOOGLE_CLIENT_ID = '878760918876-psduvcg9tsudtggqoqk0cf02n63d5mou.apps.googleusercontent.com';
+  var PROD_API = 'https://examgrader-api.marymount-exams.workers.dev';
+
+  // The backend address is FIXED. The Google ID token and the session are sent
+  // there, so a crafted link must not be able to point the page elsewhere.
+  // Only when the page itself runs from localhost (local trials) ?src= is allowed.
+  var API_BASE = PROD_API;
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    var override = new URLSearchParams(location.search).get('src');
+    if (override && /^https?:\/\//.test(override)) { API_BASE = override.replace(/\/+$/, ''); }
+  }
+
+  var SESSION_KEY = 'examAdminSession';
+
+  // ---------------------------------------------------------------------------
+  // State: everything the views need, in one object
+  // ---------------------------------------------------------------------------
+  var S = {
+    session: '', email: '', role: '', expiresAt: 0,
+    exams: [],            // from GET /api/admin/exams
+    examId: '',           // exam currently being worked on
+    tab: 'attempts',
+    attempts: null,       // list rows for the current exam, null = not loaded
+    questions: null,      // admin view of questions, null = not loaded
+    filter: { text: '', set: '', klass: '', status: '' },
+    sort: { key: 'started', dir: -1 },
+    qSet: '',             // question list filter ('' = all sets)
+    simPoll: 0            // incremented to cancel an in-flight similarity poll
+  };
+
+  // ---------------------------------------------------------------------------
+  // Small helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * DOM builder: h('div', {class: 'x', onclick: fn}, child, child...).
+   * Strings become text nodes (never HTML), arrays are flattened, null/false
+   * are skipped. This is the only way data reaches the page.
+   */
+  function h(tag, props) {
+    var el = document.createElement(tag);
+    if (props) {
+      Object.keys(props).forEach(function (k) {
+        var v = props[k];
+        if (v === null || v === undefined || v === false) { return; }
+        if (k === 'class') { el.className = v; }
+        else if (k.indexOf('on') === 0) { el.addEventListener(k.slice(2), v); }
+        else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'selected') { el[k] = v; }
+        else { el.setAttribute(k, v === true ? '' : v); }
+      });
+    }
+    function add(kid) {
+      if (kid === null || kid === undefined || kid === false) { return; }
+      if (Array.isArray(kid)) { kid.forEach(add); return; }
+      el.appendChild(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    }
+    for (var i = 2; i < arguments.length; i++) { add(arguments[i]); }
+    return el;
+  }
+
+  function byId(id) { return document.getElementById(id); }
+  function clear(el) { while (el.firstChild) { el.removeChild(el.firstChild); } }
+  function mount(el, node) { clear(el); el.appendChild(node); }
+
+  /** sessionStorage can throw (private windows, blocked storage): never rely on it. */
+  function storeGet() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { return null; } }
+  function storeSet(v) { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(v)); } catch (e) { /* ignore */ } }
+  function storeClear() { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ } }
+
+  var TZ = 'America/Bogota';
+  function fmtDateTime(ms) {
+    if (!ms) { return '-'; }
+    return new Date(ms).toLocaleString('es-CO', { timeZone: TZ, hour12: false, day: '2-digit', month: '2-digit',
+                                                   hour: '2-digit', minute: '2-digit' });
+  }
+  function fmtClock(ms) {
+    return new Date(ms).toLocaleTimeString('es-CO', { timeZone: TZ, hour12: false });
+  }
+  function mmss(ms) {
+    var s = Math.floor((ms || 0) / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  var STATUS_LABEL = { started: 'In progress', submitted: 'Submitted', grading: 'Grading', graded: 'Graded', error: 'Error' };
+  var EVENT_LABEL = {
+    away: 'Left the tab', unfocus: 'Window lost focus', resize: 'Window shrunk (split screen)',
+    contextmenu: 'Right-click', copy: 'Copy', cut: 'Cut', paste: 'Paste', drop: 'Drag-and-drop text',
+    back: 'Came back', bulk_input: 'Large jump in an answer (not a paste)'
+  };
+
+  // ---------------------------------------------------------------------------
+  // API access
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Calls the Worker. Resolves with the parsed JSON on success; rejects with an
+   * Error whose message is the server's text. A 401 means the session ended
+   * (expired, or the teacher was removed), so the page returns to sign-in.
+   */
+  function api(method, path, body, extraHeaders) {
+    var headers = {};
+    if (S.session) { headers.Authorization = 'Bearer ' + S.session; }
+    var init = { method: method, headers: headers };
+    if (extraHeaders) { Object.keys(extraHeaders).forEach(function (k) { headers[k] = extraHeaders[k]; }); }
+    if (body instanceof Blob) { init.body = body; }          // raw upload: the browser sets Content-Type
+    else if (body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+    return fetch(API_BASE + path, init).then(function (res) {
+      return res.json().catch(function () { return { success: false, error: 'Bad response from server' }; })
+        .then(function (data) {
+          if (res.status === 401 && S.session) {
+            signOut('Your session ended. Please sign in again.');
+            throw new Error('Session ended');
+          }
+          if (!data.success) {
+            var err = new Error(data.error || 'Request failed');
+            err.code = data.code;
+            throw err;
+          }
+          return data;
+        });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sign-in and sign-out
+  // ---------------------------------------------------------------------------
+
+  function showSignInError(text) {
+    var el = byId('signinError');
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  var googleReady = false;
+  function initGoogle() {
+    if (googleReady) { return; }
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+      setTimeout(initGoogle, 150);   // the GSI script loads async
+      return;
+    }
+    googleReady = true;
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: false });
+    google.accounts.id.renderButton(byId('signinBtn'), {
+      type: 'standard', theme: 'outline', size: 'large', text: 'sign_in_with', shape: 'rectangular', width: 280 });
+  }
+
+  /** Google gave us an ID token: the Worker decides whether this person is a teacher. */
+  function onGoogleCredential(response) {
+    byId('signinError').classList.add('hidden');
+    api('POST', '/api/admin/login', { idToken: response.credential }).then(function (d) {
+      S.session = d.session; S.email = d.email; S.role = d.role; S.expiresAt = d.expiresAt;
+      storeSet({ session: S.session, email: S.email, role: S.role, expiresAt: S.expiresAt });
+      enterApp();
+    }).catch(function (e) {
+      showSignInError(e.code === 'not_a_teacher'
+        ? 'That account is not on the teachers list.'
+        : 'Sign-in failed: ' + e.message);
+    });
+  }
+
+  function signOut(message) {
+    S.session = ''; S.email = ''; S.role = '';
+    storeClear();
+    S.exams = []; S.examId = ''; S.attempts = null; S.questions = null; S.simPoll++;
+    byId('app').classList.add('hidden');
+    byId('who').classList.add('hidden');
+    byId('signinCard').classList.remove('hidden');
+    if (typeof google !== 'undefined' && google.accounts && google.accounts.id && google.accounts.id.disableAutoSelect) {
+      google.accounts.id.disableAutoSelect();
+    }
+    if (message) { showSignInError(message); } else { byId('signinError').classList.add('hidden'); }
+    // A resumed session never rendered the button; make sure it exists now.
+    initGoogle();
+  }
+
+  function enterApp() {
+    byId('signinCard').classList.add('hidden');
+    byId('app').classList.remove('hidden');
+    byId('who').classList.remove('hidden');
+    byId('whoEmail').textContent = S.email;
+    loadExams();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Banner (success / error messages) and shell (exam bar + tabs)
+  // ---------------------------------------------------------------------------
+
+  function banner(text, kind) {
+    var el = byId('banner');
+    clear(el);
+    if (text) { el.appendChild(h('div', { class: 'msg ' + (kind || 'info') }, text)); }
+  }
+  function fail(e) { banner(e.message || String(e), 'err'); }
+
+  function currentExam() {
+    return S.exams.filter(function (e) { return e.id === S.examId; })[0] || null;
+  }
+
+  function loadExams(selectId) {
+    return api('GET', '/api/admin/exams').then(function (d) {
+      S.exams = d.exams;
+      var wanted = selectId || S.examId;
+      if (!S.exams.some(function (e) { return e.id === wanted; })) {
+        // Default choice: the exam served without &exam=, else the first one.
+        var def = S.exams.filter(function (e) { return e.isDefault; })[0] || S.exams[0];
+        wanted = def ? def.id : '';
+      }
+      if (wanted !== S.examId) { S.attempts = null; S.questions = null; }
+      S.examId = wanted;
+      renderShell();
+    }).catch(fail);
+  }
+
+  function renderShell() {
+    var exam = currentExam();
+    var bar = byId('exambar');
+    clear(bar);
+
+    var select = h('select', { id: 'examSelect', onchange: function () {
+      S.examId = select.value; S.attempts = null; S.questions = null; S.simPoll++;
+      renderShell();
+    } }, S.exams.map(function (e) {
+      return h('option', { value: e.id, selected: e.id === S.examId }, e.title + ' (' + e.id + ')');
+    }));
+    bar.appendChild(select);
+
+    if (exam) {
+      bar.appendChild(h('span', { class: 'pill ' + (exam.active ? 'open' : 'closed'), id: 'activePill' },
+        exam.active ? 'Open to students' : 'Closed'));
+      bar.appendChild(h('button', { class: 'btn secondary small', id: 'toggleActive', onclick: toggleActive },
+        exam.active ? 'Close exam' : 'Open exam'));
+      if (exam.isDefault) { bar.appendChild(h('span', { class: 'pill ok' }, 'Default')); }
+    }
+    bar.appendChild(h('button', { class: 'btn small', id: 'newExamBtn', onclick: function () { S.tab = 'newexam'; renderShell(); } },
+      'New exam'));
+
+    renderTabs();
+    renderView();
+  }
+
+  /** Builds the tab bar; S.tab decides which one is highlighted. */
+  function renderTabs() {
+    var tabs = [['attempts', 'Attempts'], ['questions', 'Questions'], ['settings', 'Settings'], ['tools', 'Tools']];
+    if (S.role === 'admin') { tabs.push(['teachers', 'Teachers']); }
+    var tabBar = byId('tabs');
+    clear(tabBar);
+    tabs.forEach(function (t) {
+      tabBar.appendChild(h('button', {
+        class: 'tab' + (S.tab === t[0] ? ' active' : ''), 'data-tab': t[0],
+        onclick: function () { S.tab = t[0]; banner(''); renderShell(); }
+      }, t[1]));
+    });
+  }
+
+  function renderView() {
+    var view = byId('view');
+    if (S.tab === 'newexam') { return mount(view, newExamView()); }
+    if (S.tab === 'teachers') { return loadTeachers(); }
+    if (!currentExam()) {
+      return mount(view, h('div', { class: 'card' }, 'There are no exams yet. Use "New exam" to create one.'));
+    }
+    if (S.tab === 'attempts') { return attemptsView(); }
+    if (S.tab === 'questions') { return questionsView(); }
+    if (S.tab === 'settings') { return mount(view, settingsView()); }
+    if (S.tab === 'tools') { return mount(view, toolsView()); }
+  }
+
+  /** Header switch: open or close the exam to students. */
+  function toggleActive() {
+    var exam = currentExam();
+    if (!exam) { return; }
+    if (!exam.active && !window.confirm('Open "' + exam.title + '" to students now?')) { return; }
+    api('PUT', '/api/admin/exams/' + encodeURIComponent(exam.id), { active: !exam.active })
+      .then(function () { banner(exam.active ? 'Exam closed.' : 'Exam opened.', 'okmsg'); return loadExams(); })
+      .catch(fail);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attempts: list
+  // ---------------------------------------------------------------------------
+
+  function attemptsView() {
+    if (S.attempts) { return mount(byId('view'), attemptsList()); }
+    mount(byId('view'), h('div', { class: 'card muted' }, 'Loading attempts...'));
+    api('GET', '/api/admin/attempts?exam=' + encodeURIComponent(S.examId)).then(function (d) {
+      S.attempts = d.attempts;
+      mount(byId('view'), attemptsList());
+    }).catch(fail);
+  }
+
+  /** Applies the toolbar filters and the column sort to the loaded rows. */
+  function visibleAttempts() {
+    var f = S.filter;
+    var text = f.text.trim().toLowerCase();
+    var rows = S.attempts.filter(function (a) {
+      if (f.set && a.set !== f.set) { return false; }
+      if (f.klass && a.class !== f.klass) { return false; }
+      if (f.status && a.status !== f.status) { return false; }
+      if (text && (a.firstName + ' ' + a.lastName + ' ' + a.email).toLowerCase().indexOf(text) < 0) { return false; }
+      return true;
+    });
+    var key = S.sort.key; var dir = S.sort.dir;
+    function value(a) {
+      switch (key) {
+        case 'name': return (a.lastName + ' ' + a.firstName).toLowerCase();
+        case 'class': return a.class;
+        case 'set': return a.set;
+        case 'status': return a.status;
+        case 'percentage': return a.percentage === null ? -1 : a.percentage;
+        case 'faults': return a.faults * 1000 + a.warnings;
+        default: return Date.parse(a.timestamp);
+      }
+    }
+    return rows.sort(function (x, y) { var a = value(x), b = value(y); return a < b ? -dir : a > b ? dir : 0; });
+  }
+
+  function integrityCell(a) {
+    var bits = [];
+    if (a.faults) { bits.push(h('span', { class: 'pill fault' }, a.faults + (a.faults === 1 ? ' fault' : ' faults'))); }
+    if (a.warnings) { bits.push(h('span', { class: 'pill warn' }, a.warnings + (a.warnings === 1 ? ' warning' : ' warnings'))); }
+    var extra = [];
+    if (a.awayMs) { extra.push('away ' + mmss(a.awayMs)); }
+    if (a.pasteEvents) { extra.push('paste x' + a.pasteEvents); }
+    if (extra.length) { bits.push(h('div', { class: 'small muted' }, extra.join(' · '))); }
+    return bits.length ? bits : h('span', { class: 'muted' }, '-');
+  }
+
+  function attemptsList() {
+    var all = S.attempts;
+    var graded = all.filter(function (a) { return a.status === 'graded'; });
+    var avg = graded.length
+      ? Math.round(graded.reduce(function (s, a) { return s + (a.percentage || 0); }, 0) / graded.length) + '%' : '-';
+    var flagged = all.filter(function (a) { return a.faults > 0; }).length;
+    var errors = all.filter(function (a) { return a.status === 'error'; }).length;
+
+    var classes = []; all.forEach(function (a) { if (a.class && classes.indexOf(a.class) < 0) { classes.push(a.class); } });
+    classes.sort();
+
+    function stat(v, l) { return h('div', { class: 'stat' }, h('div', { class: 'v' }, v), h('div', { class: 'l' }, l)); }
+
+    function sortHead(label, key) {
+      var arrow = S.sort.key === key ? (S.sort.dir > 0 ? ' ▲' : ' ▼') : '';
+      return h('th', { class: 'sortable', onclick: function () {
+        S.sort = { key: key, dir: S.sort.key === key ? -S.sort.dir : 1 };
+        mount(byId('view'), attemptsList());
+      } }, label + arrow);
+    }
+
+    var rows = visibleAttempts();
+    var tbody = h('tbody', null, rows.length ? rows.map(function (a) {
+      return h('tr', { class: 'click', 'data-id': a.id, onclick: function () { openAttempt(a.id); } },
+        h('td', null, h('div', null, a.lastName + ', ' + a.firstName), h('div', { class: 'small muted' }, a.email)),
+        h('td', null, a.class),
+        h('td', null, a.set),
+        h('td', null, STATUS_LABEL[a.status] || a.status,
+          a.status === 'error' ? h('div', { class: 'small', style: 'color:var(--error)' }, a.gradingError || '') : null,
+          a.status === 'graded' && a.emailStatus !== 'none'
+            ? h('div', { class: 'small muted' }, 'email ' + a.emailStatus) : null),
+        h('td', null, a.maxScore ? a.totalScore + '/' + a.maxScore : '-'),
+        h('td', null, a.percentage === null ? '-' : a.percentage + '%'),
+        h('td', { style: 'font-weight:bold;color:var(--primary)' }, a.finalGrade || '-'),
+        h('td', null, integrityCell(a)),
+        h('td', { class: 'small' }, fmtDateTime(Date.parse(a.timestamp))));
+    }) : h('tr', null, h('td', { colspan: 9, class: 'muted' }, 'No attempts match.')));
+
+    return h('div', null,
+      h('div', { class: 'stats' },
+        stat(all.length, 'Attempts'), stat(graded.length, 'Graded'), stat(avg, 'Average'),
+        stat(flagged, 'With faults'), stat(errors, 'Errors')),
+      h('div', { class: 'toolbar' },
+        h('input', { type: 'search', id: 'fText', placeholder: 'Search name or email', value: S.filter.text,
+                     oninput: function (e) { S.filter.text = e.target.value; refreshRowsOnly(); } }),
+        filterSelect('fSet', 'All sets', ['A', 'B', 'C'], S.filter.set, function (v) { S.filter.set = v; }),
+        filterSelect('fClass', 'All classes', classes, S.filter.klass, function (v) { S.filter.klass = v; }),
+        filterSelect('fStatus', 'All statuses', Object.keys(STATUS_LABEL), S.filter.status,
+          function (v) { S.filter.status = v; }, STATUS_LABEL),
+        h('button', { class: 'btn secondary', id: 'refreshAttempts', onclick: function () {
+          S.attempts = null; attemptsView(); } }, 'Refresh')),
+      h('div', { class: 'table-wrap' },
+        h('table', { id: 'attemptsTable' },
+          h('thead', null, h('tr', null,
+            sortHead('Student', 'name'), sortHead('Class', 'class'), sortHead('Set', 'set'), sortHead('Status', 'status'),
+            h('th', null, 'Score'), sortHead('%', 'percentage'), h('th', null, 'Grade'),
+            sortHead('Integrity', 'faults'), sortHead('Started', 'started'))),
+          tbody)));
+  }
+
+  /** Re-renders only the table body while typing in the search box (keeps input focus). */
+  function refreshRowsOnly() {
+    var fresh = attemptsList();
+    var old = byId('attemptsTable');
+    old.parentNode.replaceChild(fresh.querySelector('#attemptsTable'), old);
+  }
+
+  function filterSelect(id, allLabel, values, current, onChange, labels) {
+    return h('select', { id: id, onchange: function (e) { onChange(e.target.value); mount(byId('view'), attemptsList()); } },
+      h('option', { value: '' }, allLabel),
+      values.map(function (v) {
+        return h('option', { value: v, selected: v === current }, labels ? labels[v] : v);
+      }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attempts: one attempt in detail
+  // ---------------------------------------------------------------------------
+
+  function openAttempt(id) {
+    S.tab = 'attempts';
+    S.simPoll++;
+    renderTabs();
+    var view = byId('view');
+    mount(view, h('div', { class: 'card muted' }, 'Loading attempt...'));
+    api('GET', '/api/admin/attempts/' + encodeURIComponent(id)).then(function (d) {
+      mount(view, attemptDetail(d.attempt));
+    }).catch(fail);
+  }
+
+  /** The text of the student's choice or answer, as the teacher should read it. */
+  function answerBlock(q, r, rawAnswer) {
+    if (r && q.type === 'mc') {
+      return h('div', null,
+        h('div', null, 'Selected: ', h('b', null, r.selected)),
+        r.correct ? null : h('div', null, 'Correct: ', h('b', null, r.correctText)));
+    }
+    if (r && q.type === 'short') {
+      return h('div', null,
+        h('div', { class: 'answer pre' }, r.answer || '(no answer)'),
+        h('div', { class: 'small muted' }, 'Accepted: ' + (r.accepted || '')));
+    }
+    if (r) { return h('div', { class: 'answer pre' }, r.answer || '(no answer)'); }
+    // Not graded yet: show the raw stored answer.
+    var raw = rawAnswer === undefined || rawAnswer === null ? '(no answer)'
+      : typeof rawAnswer === 'number' ? 'option ' + (rawAnswer + 1) + ' (printed order)' : String(rawAnswer);
+    return h('div', { class: 'answer pre' }, raw);
+  }
+
+  /**
+   * Penalty editor. The integrity log below stays untouched as evidence; this
+   * only changes the points taken (0 = none). Use it for false positives.
+   */
+  function penaltyControl(a) {
+    var input = h('input', { type: 'number', id: 'penaltyInput', min: 0, max: 4, step: 1, value: String(a.penalty),
+                             style: 'width:70px' });
+    return h('div', { class: 'toolbar', style: 'margin:10px 0 0' },
+      h('span', { class: 'small muted' }, 'Penalty points taken (0 removes it):'), input,
+      h('button', { class: 'btn small', id: 'penaltySave', onclick: function () {
+        api('PUT', '/api/admin/attempts/' + encodeURIComponent(a.id) + '/penalty', { penalty: Number(input.value) })
+          .then(function () { S.attempts = null; banner('Penalty updated.', 'okmsg'); openAttempt(a.id); })
+          .catch(fail);
+      } }, 'Save penalty'));
+  }
+
+  function attemptDetail(a) {
+    var results = a.results || {};
+    var integ = a.integrity;
+
+    function overrideControl(qid, q, r) {
+      var has = a.overrides && a.overrides[qid] !== undefined && a.overrides[qid] !== null;
+      var input = h('input', { type: 'number', min: 0, max: r.max, step: 1, class: 'ovr', 'data-qid': qid,
+                               value: has ? String(a.overrides[qid]) : '', placeholder: String(r.score),
+                               style: 'width:80px' });
+      return h('div', { class: 'toolbar', style: 'margin:8px 0 0' },
+        h('span', { class: 'small muted' }, 'Your score (blank = keep ' + r.score + '):'),
+        input,
+        h('span', { class: 'small muted' }, '/ ' + r.max),
+        h('button', { class: 'btn small', onclick: function () {
+          var v = input.value.trim();
+          var payload = {}; payload[qid] = v === '' ? null : Number(v);
+          api('PUT', '/api/admin/attempts/' + encodeURIComponent(a.id) + '/overrides', { overrides: payload })
+            .then(function () { S.attempts = null; banner('Score saved.', 'okmsg'); openAttempt(a.id); })
+            .catch(fail);
+        } }, 'Save'));
+    }
+
+    var qCards = a.paper.qids.map(function (qid, i) {
+      var r = results[qid] || null;
+      var type = r ? r.type : '';
+      var q = { type: type };
+      var has = a.overrides && a.overrides[qid] !== undefined && a.overrides[qid] !== null;
+      var score = r ? (has && r.type !== 'mc' ? a.overrides[qid] : r.score) : null;
+      var cls = 'qcard' + (r && r.type === 'mc' ? (r.correct ? ' right' : ' wrong') : '');
+      return h('div', { class: cls },
+        h('div', { class: 'qhead' },
+          h('span', null, 'Q' + (i + 1) + ' · ' + qid + (r ? ' · ' + r.type : '')),
+          h('span', null, r ? score + '/' + r.max + (has ? ' (overridden)' : '') : 'not graded')),
+        r ? h('div', { class: 'pre' }, r.text) : null,
+        answerBlock(q, r, a.answers[qid]),
+        r && r.feedback ? h('div', { class: 'small muted pre' }, 'Feedback: ' + r.feedback) : null,
+        r && r.type !== 'mc' ? overrideControl(qid, q, r) : null);
+    });
+
+    // Integrity timeline
+    var timeline;
+    if (!integ.events.length) {
+      timeline = h('div', { class: 'muted' }, 'No events recorded.');
+    } else {
+      timeline = h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, h('th', null, 'Time'), h('th', null, 'Outcome'), h('th', null, 'Event'), h('th', null, 'Detail'))),
+        h('tbody', null, integ.events.map(function (e) {
+          var detail = [];
+          if (e.ms !== undefined) { detail.push(mmss(e.ms) + ' min'); }
+          if (e.len !== undefined) { detail.push(e.len + ' chars'); }
+          var pill = e.outcome === 'fault' ? h('span', { class: 'pill fault' }, 'FAULT')
+            : e.outcome === 'warning' ? h('span', { class: 'pill warn' }, 'warning')
+            : h('span', { class: 'muted small' }, 'info');
+          return h('tr', null, h('td', null, fmtClock(e.t)), h('td', null, pill),
+            h('td', null, EVENT_LABEL[e.type] || e.type), h('td', null, detail.join(', ')));
+        }))));
+    }
+
+    return h('div', null,
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn secondary', id: 'backToList', onclick: function () {
+          S.attempts = null; attemptsView(); } }, '← Back to attempts'),
+        h('button', { class: 'btn danger', id: 'deleteAttempt', onclick: function () {
+          if (!window.confirm('Delete this attempt? The student will be able to start the exam again and this attempt will be lost.')) { return; }
+          api('DELETE', '/api/admin/attempts/' + encodeURIComponent(a.id))
+            .then(function () { S.attempts = null; banner('Attempt deleted.', 'okmsg'); attemptsView(); })
+            .catch(fail);
+        } }, 'Delete attempt')),
+      h('div', { class: 'card' },
+        h('h3', null, a.lastName + ', ' + a.firstName),
+        h('div', { class: 'muted' }, a.email + ' · class ' + a.class + ' · set ' + a.set + ' · started ' + fmtDateTime(a.startedAt) +
+          (a.submittedAt ? ' · submitted ' + fmtDateTime(a.submittedAt) : '')),
+        h('div', { style: 'margin-top:10px' },
+          h('span', { class: 'pill ' + (a.status === 'graded' ? 'ok' : a.status === 'error' ? 'err' : 'closed') },
+            STATUS_LABEL[a.status] || a.status),
+          a.maxScore ? h('span', { style: 'margin-left:12px' },
+            'Score ' + a.totalScore + '/' + a.maxScore + ' (' + a.percentage + '%) · grade ' + a.finalGrade +
+            ' · multiple choice ' + a.mcScore + ' · open ' + a.openScore + ' · penalty -' + a.penalty) : null),
+        a.status === 'graded' ? penaltyControl(a) : null,
+        a.gradingError ? h('div', { class: 'msg err', style: 'margin-top:10px' }, a.gradingError) : null),
+      h('div', { class: 'card' },
+        h('h3', null, 'Integrity: ' + integ.faults + ' fault(s), ' + integ.warnings + ' warning(s), away ' + mmss(integ.awayMs) +
+          ', pasted ' + integ.pasteEvents + 'x (' + integ.pasteChars + ' chars)'),
+        timeline),
+      h('h3', { style: 'margin:16px 0 8px' }, 'Answers'),
+      qCards);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Images
+  // ---------------------------------------------------------------------------
+
+  var MAX_IMAGE_SIDE = 1600;          // px; larger figures are scaled down before upload
+  var MAX_IMAGE_BYTES = 1.5 * 1024 * 1024;   // server limit is 2 MB; leave headroom
+
+  /**
+   * Resolves with the Blob to upload. Small figures go as they are. Large ones
+   * are scaled to at most MAX_IMAGE_SIDE px (PNG stays PNG so diagrams keep
+   * crisp lines; everything else becomes JPEG). If the browser cannot decode
+   * the file the original is sent and the server decides.
+   */
+  function prepareImage(file) {
+    return new Promise(function (resolve) {
+      var url;
+      try { url = URL.createObjectURL(file); } catch (e) { resolve(file); return; }
+      var img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth; var hgt = img.naturalHeight;
+        if (Math.max(w, hgt) <= MAX_IMAGE_SIDE && file.size <= MAX_IMAGE_BYTES) { resolve(file); return; }
+        var scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(w, hgt));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale); canvas.height = Math.round(hgt * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        var type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        canvas.toBlob(function (blob) { resolve(blob || file); }, type, 0.85);
+      };
+      img.src = url;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Questions
+  // ---------------------------------------------------------------------------
+
+  function questionsView() {
+    if (S.questions) { return mount(byId('view'), questionsList()); }
+    mount(byId('view'), h('div', { class: 'card muted' }, 'Loading questions...'));
+    api('GET', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions').then(function (d) {
+      S.questions = d.questions;
+      mount(byId('view'), questionsList());
+    }).catch(fail);
+  }
+
+  function questionsList() {
+    var rows = S.questions.filter(function (q) { return !S.qSet || q.set === S.qSet; });
+    var setSelect = h('select', { id: 'qSetFilter', onchange: function (e) { S.qSet = e.target.value; mount(byId('view'), questionsList()); } },
+      h('option', { value: '' }, 'All sets'),
+      ['A', 'B', 'C'].map(function (s) { return h('option', { value: s, selected: s === S.qSet }, 'Set ' + s); }));
+
+    var total = rows.reduce(function (s, q) { return s + q.points; }, 0);
+    var LETTERS = ['A', 'B', 'C', 'D'];
+
+    return h('div', null,
+      h('div', { class: 'toolbar' }, setSelect,
+        h('button', { class: 'btn', id: 'addQuestion', onclick: function () {
+          mount(byId('view'), questionForm(null)); } }, 'Add question'),
+        h('button', { class: 'btn secondary', id: 'importPdf', onclick: function () { openImport(); } }, 'Import from PDF'),
+        h('span', { class: 'muted' }, rows.length + ' question(s), ' + total + ' points')),
+      h('div', { class: 'table-wrap' }, h('table', { id: 'questionsTable' },
+        h('thead', null, h('tr', null, ['Set', 'Id', 'Section', 'Type', 'Pts', 'Question', 'Answer', ''].map(function (t) { return h('th', null, t); }))),
+        h('tbody', null, rows.length ? rows.map(function (q) {
+          var ans = q.type === 'mc' ? LETTERS[q.correctIndex] : q.type === 'short' ? (q.accepted || []).join(' | ') : 'rubric';
+          return h('tr', { 'data-qid': q.id },
+            h('td', null, q.set), h('td', null, q.id), h('td', { class: 'small' }, q.section), h('td', null, q.type),
+            h('td', null, q.points),
+            h('td', { class: 'pre' }, q.text.length > 140 ? q.text.slice(0, 140) + '...' : q.text,
+              q.imageHash ? h('span', { class: 'pill ok', style: 'margin-left:6px' }, 'image') : null),
+            h('td', { class: 'small' }, ans),
+            h('td', null, h('button', { class: 'btn secondary small edit', onclick: function () {
+              mount(byId('view'), questionForm(q)); } }, 'Edit')));
+        }) : h('tr', null, h('td', { colspan: 8, class: 'muted' }, 'No questions.'))))));
+  }
+
+  /** Add (q = null) or edit form. Set and id are fixed once a question exists. */
+  function questionForm(q) {
+    var editing = !!q;
+    var f = {};   // element references, read on save
+
+    function field(label, el, hint) {
+      return h('div', { class: 'field' }, h('label', null, label), el, hint ? h('div', { class: 'hint' }, hint) : null);
+    }
+    f.set = h('select', { id: 'qfSet', disabled: editing },
+      ['A', 'B', 'C'].map(function (s) { return h('option', { value: s, selected: q ? q.set === s : s === (S.qSet || 'A') }, 'Set ' + s); }));
+    f.id = h('input', { type: 'text', id: 'qfId', value: q ? q.id : '', disabled: editing, maxlength: 40 });
+    f.section = h('input', { type: 'text', id: 'qfSection', value: q ? q.section : '' });
+    f.type = h('select', { id: 'qfType', onchange: showType },
+      [['mc', 'Multiple choice'], ['short', 'Short answer'], ['openEnded', 'Open-ended']].map(function (t) {
+        return h('option', { value: t[0], selected: q ? q.type === t[0] : t[0] === 'mc' }, t[1]);
+      }));
+    f.points = h('input', { type: 'number', id: 'qfPoints', min: 1, max: 100, value: q ? String(q.points) : '1' });
+    f.text = h('textarea', { id: 'qfText' }); f.text.value = q ? q.text : '';
+
+    // Multiple choice: four options and which one is correct (0-based on the wire).
+    f.opts = []; f.correct = [];
+    var mcBox = h('div', { id: 'qfMc' }, [0, 1, 2, 3].map(function (i) {
+      var radio = h('input', { type: 'radio', name: 'qfCorrect', value: String(i),
+                               checked: q ? q.correctIndex === i : i === 0 });
+      var text = h('input', { type: 'text', class: 'qfOpt', value: q && q.options ? q.options[i] : '', style: 'flex:1' });
+      f.opts.push(text); f.correct.push(radio);
+      return h('div', { class: 'toolbar', style: 'margin-bottom:6px' },
+        h('label', { class: 'check' }, radio, 'Option ' + 'ABCD'[i] + ' is correct'), text);
+    }));
+
+    // Image: held as a hash. Upload gives a new hash; Remove clears it; save sends it.
+    f.imageHash = q && q.imageHash ? q.imageHash : '';
+    var preview = h('img', { id: 'qfImagePreview', alt: 'Question figure', style: 'max-width:260px;max-height:200px;display:block;margin:8px 0' });
+    var imageNote = h('div', { class: 'small muted', id: 'qfImageNote' });
+    var file = h('input', { type: 'file', id: 'qfImageFile', accept: 'image/png,image/jpeg,image/gif,image/webp' });
+    var removeBtn = h('button', { class: 'btn secondary small', id: 'qfImageRemove', onclick: function () {
+      f.imageHash = ''; showImage(); } }, 'Remove image');
+    function showImage() {
+      preview.classList.toggle('hidden', !f.imageHash);
+      removeBtn.classList.toggle('hidden', !f.imageHash);
+      if (f.imageHash) { preview.src = API_BASE + '/img/' + f.imageHash; }
+    }
+    file.addEventListener('change', function () {
+      var chosen = file.files && file.files[0];
+      if (!chosen) { return; }
+      imageNote.textContent = 'Uploading...';
+      prepareImage(chosen).then(function (blob) {
+        return api('POST', '/api/admin/images', blob, { 'X-Filename': encodeURIComponent(chosen.name) });
+      }).then(function (d) {
+        f.imageHash = d.hash; imageNote.textContent = 'Image uploaded.'; showImage();
+      }).catch(function (e) { imageNote.textContent = 'Upload failed: ' + e.message; });
+    });
+    var imageBox = h('div', { class: 'field', style: 'margin-top:12px' },
+      h('label', null, 'Figure (optional)'), preview, file, ' ', removeBtn, imageNote);
+
+    f.accepted = h('textarea', { id: 'qfAccepted' }); f.accepted.value = q && q.accepted ? q.accepted.join('\n') : '';
+    var shortBox = h('div', { id: 'qfShort' }, field('Accepted answers (one per line)', f.accepted));
+    f.rubric = h('textarea', { id: 'qfRubric', style: 'min-height:140px' }); f.rubric.value = q ? q.rubric || '' : '';
+    var openBox = h('div', { id: 'qfOpen' }, field('Marking rubric (never shown to students)', f.rubric));
+
+    function showType() {
+      var t = f.type.value;
+      mcBox.classList.toggle('hidden', t !== 'mc');
+      shortBox.classList.toggle('hidden', t !== 'short');
+      openBox.classList.toggle('hidden', t !== 'openEnded');
+    }
+
+    function save() {
+      var type = f.type.value;
+      var body = { set: f.set.value, id: f.id.value.trim(), section: f.section.value, type: type,
+                   points: Number(f.points.value), text: f.text.value };
+      // An edit replaces the whole row, so the image must be sent back or it detaches.
+      if (f.imageHash) { body.imageHash = f.imageHash; }
+      if (q) { body.position = q.position; }
+      if (type === 'mc') {
+        body.options = f.opts.map(function (o) { return o.value; });
+        body.correctIndex = f.correct.map(function (r) { return r.checked; }).indexOf(true);
+      } else if (type === 'short') {
+        body.accepted = f.accepted.value.split('\n');
+      } else {
+        body.rubric = f.rubric.value;
+      }
+      var base = '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions';
+      var call = editing
+        ? api('PUT', base + '/' + encodeURIComponent(q.set) + '/' + encodeURIComponent(q.id), body)
+        : api('POST', base, body);
+      call.then(function () {
+        S.questions = null; banner('Question saved.', 'okmsg'); questionsView();
+      }).catch(fail);
+    }
+
+    function remove() {
+      if (!window.confirm('Delete question ' + q.id + '? Attempts already taken keep their own copy of the text.')) { return; }
+      api('DELETE', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions/' +
+          encodeURIComponent(q.set) + '/' + encodeURIComponent(q.id))
+        .then(function () { S.questions = null; banner('Question deleted.', 'okmsg'); questionsView(); })
+        .catch(fail);
+    }
+
+    var form = h('div', { class: 'card' },
+      h('h3', null, editing ? 'Edit question ' + q.id : 'Add question'),
+      h('div', { class: 'grid2' },
+        field('Set', f.set), field('Question id', f.id, 'Example: A_6 or Q3b. Cannot change later.'),
+        field('Section', f.section), field('Type', f.type), field('Points', f.points)),
+      h('div', { style: 'margin-top:12px' }, field('Question text', f.text)),
+      imageBox,
+      h('div', { style: 'margin-top:12px' }, mcBox, shortBox, openBox),
+      h('div', { class: 'toolbar', style: 'margin-top:14px' },
+        h('button', { class: 'btn', id: 'qfSave', onclick: save }, 'Save'),
+        h('button', { class: 'btn secondary', onclick: function () { mount(byId('view'), questionsList()); } }, 'Cancel'),
+        editing ? h('button', { class: 'btn danger', id: 'qfDelete', onclick: remove }, 'Delete') : null));
+    showType();
+    showImage();
+    return form;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import from PDF
+  // ---------------------------------------------------------------------------
+  //
+  // Flow: question-paper PDF -> job (model reads it) -> review cards -> optional
+  // marking-scheme PDF fills correct answers / rubrics -> explicit import.
+  // Nothing is saved until the teacher presses "Import". The model can be wrong
+  // about a mark, an option or a correct letter, so every field stays editable.
+
+  var JOB_POLL_MS = 2000;
+  var JOB_MAX_POLLS = 150;           // about 5 minutes
+  var I = null;                      // import state: {set, questions[], images[], usage, existing{}}
+
+  /** Upload a PDF, start the job and resolve with its output when done. */
+  function runPdfJob(file, kind, items, onStatus) {
+    onStatus('Uploading ' + file.name + '...');
+    return api('POST', '/api/admin/jobs?kind=' + kind, file).then(function (d) {
+      onStatus('Reading the PDF (this can take a minute)...');
+      return api('POST', '/api/admin/jobs/' + d.jobId + '/run', items ? { items: items } : {}).then(function () {
+        return waitJob(d.jobId, 0);
+      });
+    });
+  }
+
+  function waitJob(jobId, polls) {
+    return new Promise(function (resolve, reject) {
+      function tick(n) {
+        api('GET', '/api/admin/jobs/' + jobId).then(function (d) {
+          if (d.status === 'done') { resolve(d.output); }
+          else if (d.status === 'error') { reject(new Error(d.error || 'The job failed')); }
+          else if (n >= JOB_MAX_POLLS) { reject(new Error('Timed out waiting for the PDF to be read.')); }
+          else { setTimeout(function () { tick(n + 1); }, JOB_POLL_MS); }
+        }).catch(reject);
+      }
+      tick(polls);
+    });
+  }
+
+  /** Main question number from a printed label: "11(b)(i)" -> 11. */
+  function mainNumber(label) {
+    var m = /^\D*(\d+)/.exec(String(label || ''));
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  /** Which uploaded figures could belong to this question (by "Q<n>" in the file name). */
+  function figureCandidates(q) {
+    var n = mainNumber(q.figure) || mainNumber(q.label);
+    if (!n || !q.figure) { return []; }          // only questions that mention a figure get a suggestion
+    return I.images.filter(function (im) {
+      var m = /(?:^|[^0-9A-Za-z])Q(\d+)(?!\d)/i.exec(im.name || '');
+      return m && parseInt(m[1], 10) === n;
+    });
+  }
+
+  /** Suggests figures and unique ids after (re)loading images or questions. */
+  function applySuggestions() {
+    I.questions.forEach(function (q) {
+      if (q.imageHash) { return; }
+      var c = figureCandidates(q);
+      q.imageChoices = c.length;                 // >1 means the teacher must choose
+      if (c.length === 1) { q.imageHash = c[0].hash; }
+    });
+  }
+
+  function uniqueId(base, taken) {
+    var id = base; var k = 2;
+    while (taken[id]) { id = base + '_' + k; k++; }
+    taken[id] = true;
+    return id;
+  }
+
+  function openImport() {
+    banner('');
+    var set = S.qSet || 'A';
+    var existing = {};
+    Promise.all([
+      api('GET', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions'),
+      api('GET', '/api/admin/images')
+    ]).then(function (r) {
+      r[0].questions.forEach(function (q) { existing[q.set + '/' + q.id] = true; });
+      I = { set: set, questions: [], images: r[1].images, usage: null, existing: existing, schemeNote: '' };
+      mount(byId('view'), importView());
+    }).catch(fail);
+  }
+
+  function importView() {
+    var status = h('div', { class: 'muted small', id: 'impStatus', style: 'margin-top:8px' });
+    var setSel = h('select', { id: 'impSet' }, ['A', 'B', 'C'].map(function (x) {
+      return h('option', { value: x, selected: x === I.set }, 'Set ' + x); }));
+    setSel.addEventListener('change', function () { I.set = setSel.value; renderReview(); });
+    var paper = h('input', { type: 'file', id: 'impPaper', accept: 'application/pdf' });
+    var figures = h('input', { type: 'file', id: 'impFigures', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true });
+    var scheme = h('input', { type: 'file', id: 'impScheme', accept: 'application/pdf' });
+    var figStatus = h('div', { class: 'muted small', id: 'impFigStatus', style: 'margin-top:6px' });
+    var schemeStatus = h('div', { class: 'muted small', id: 'impSchemeStatus', style: 'margin-top:6px' });
+
+    var readBtn = h('button', { class: 'btn', id: 'impRead', onclick: function () {
+      var f = paper.files && paper.files[0];
+      if (!f) { status.textContent = 'Choose the question-paper PDF first.'; return; }
+      readBtn.disabled = true;
+      runPdfJob(f, 'extractQuestions', null, function (t) { status.textContent = t; }).then(function (out) {
+        var taken = {};
+        I.usage = out.usage;
+        I.questions = out.questions.map(function (q, i) {
+          var base = 'Q' + (String(q.label).replace(/[^A-Za-z0-9]/g, '') || (i + 1));
+          return { keep: true, id: uniqueId(base, taken), label: q.label, figure: q.figure, type: q.type,
+                   points: q.points, text: q.text, options: [0, 1, 2, 3].map(function (k) { return q.options[k] || ''; }),
+                   extraOptions: q.options.length > 4, correctIndex: -1, accepted: '', rubric: '', imageHash: '',
+                   imageChoices: 0, fromScheme: false };
+        });
+        applySuggestions();
+        status.textContent = 'Read ' + I.questions.length + ' questions' +
+          (out.usage ? ' (model usage: ' + out.usage.input_tokens + ' input, ' + out.usage.output_tokens + ' output tokens)' : '') +
+          '. Check each one below.';
+        renderReview();
+      }).catch(function (e) { status.textContent = 'Failed: ' + e.message; })
+        .then(function () { readBtn.disabled = false; });
+    } }, 'Read the PDF');
+
+    // Figures: upload several files at once; names like "..._Q3_clock.png" are matched to question 3.
+    figures.addEventListener('change', function () {
+      var files = Array.prototype.slice.call(figures.files || []);
+      if (!files.length) { return; }
+      var done = 0; var failed = [];
+      function next(i) {
+        if (i >= files.length) {
+          figStatus.textContent = 'Uploaded ' + done + ' of ' + files.length + (failed.length ? '. Failed: ' + failed.join('; ') : '.');
+          return api('GET', '/api/admin/images').then(function (d) { I.images = d.images; applySuggestions(); renderReview(); });
+        }
+        figStatus.textContent = 'Uploading ' + (i + 1) + ' of ' + files.length + '...';
+        return prepareImage(files[i]).then(function (blob) {
+          return api('POST', '/api/admin/images', blob, { 'X-Filename': encodeURIComponent(files[i].name) });
+        }).then(function () { done++; })
+          .catch(function (e) { failed.push(files[i].name + ' (' + e.message + ')'); })
+          .then(function () { return next(i + 1); });
+      }
+      next(0);
+    });
+
+    var schemeBtn = h('button', { class: 'btn secondary', id: 'impReadScheme', onclick: function () {
+      var f = scheme.files && scheme.files[0];
+      var kept = I.questions.filter(function (q) { return q.keep; });
+      if (!kept.length) { schemeStatus.textContent = 'Read the question paper first.'; return; }
+      if (!f) { schemeStatus.textContent = 'Choose the marking-scheme PDF first.'; return; }
+      schemeBtn.disabled = true;
+      var items = kept.map(function (q) {
+        return { id: q.id, type: q.type, points: q.points, text: q.text,
+                 options: q.type === 'mc' ? q.options : [] };
+      });
+      runPdfJob(f, 'generateRubrics', items, function (t) { schemeStatus.textContent = t; }).then(function (out) {
+        var filled = 0;
+        kept.forEach(function (q) {
+          var r = out.rubrics[q.id];
+          if (!r) { return; }
+          if (r.correctIndex !== undefined) { q.correctIndex = r.correctIndex; }
+          if (r.accepted) { q.accepted = r.accepted.join('\n'); }
+          if (r.rubric) { q.rubric = r.rubric; }
+          q.fromScheme = true; filled++;
+        });
+        schemeStatus.textContent = 'Filled ' + filled + ' of ' + out.asked + ' questions from the marking scheme. Check them.' +
+          (out.usage ? ' (model usage: ' + out.usage.input_tokens + ' input, ' + out.usage.output_tokens + ' output tokens)' : '');
+        renderReview();
+      }).catch(function (e) { schemeStatus.textContent = 'Failed: ' + e.message; })
+        .then(function () { schemeBtn.disabled = false; });
+    } }, 'Read the marking scheme');
+
+    return h('div', null,
+      h('div', { class: 'card' },
+        h('h3', null, '1. Question paper PDF'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'The PDF is read by the AI model (tokens are used). Up to 10 MB. Nothing is saved until you press Import at the end.'),
+        h('div', { class: 'toolbar' }, paper, setSel, readBtn), status),
+      h('div', { class: 'card' },
+        h('h3', null, '2. Figures (optional, can be done before or after)'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'Choose all the figure files at once. A file whose name contains Q3 (for example G10_M2_Q3_clock.png) is ' +
+          'suggested for question 3. Where two figures share a question number you choose.'),
+        figures, figStatus),
+      h('div', { class: 'card' },
+        h('h3', null, '3. Marking scheme PDF (optional)'),
+        h('p', { class: 'muted small', style: 'margin-bottom:10px' },
+          'Fills the correct option of multiple-choice questions, the accepted answers of short questions and a rubric ' +
+          'for open-ended ones. It is a second model call. Always check the result.'),
+        h('div', { class: 'toolbar' }, scheme, schemeBtn), schemeStatus),
+      h('div', { id: 'impReview' }),
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn secondary', onclick: function () { S.questions = null; questionsView(); } }, 'Cancel')));
+  }
+
+  /** Review cards: one per extracted question, every field editable. */
+  function renderReview() {
+    var box = byId('impReview');
+    if (!box) { return; }
+    // The cards are rebuilt from scratch on every change (figure picked, type
+    // changed, item ticked). Emptying the box makes the page shorter for a
+    // moment and the browser jumps back to the top, so the scroll position is
+    // saved here and put back once the new cards are in place.
+    var scrollY = document.documentElement.scrollTop || document.body.scrollTop || 0;
+    clear(box);
+    if (!I.questions.length) { return; }
+
+    var cards = I.questions.map(function (q, idx) {
+      var taken = I.existing[I.set + '/' + q.id];
+      var idInput = h('input', { type: 'text', class: 'rvId', value: q.id, style: 'width:110px', oninput: function (e) { q.id = e.target.value.trim(); } });
+      var typeSel = h('select', { class: 'rvType', onchange: function (e) { q.type = e.target.value; renderReview(); } },
+        [['mc', 'Multiple choice'], ['short', 'Short answer'], ['openEnded', 'Open-ended']].map(function (t) {
+          return h('option', { value: t[0], selected: q.type === t[0] }, t[1]); }));
+      var pts = h('input', { type: 'number', class: 'rvPoints', min: 1, max: 100, value: String(q.points), style: 'width:70px',
+                             oninput: function (e) { q.points = Number(e.target.value); } });
+      var text = h('textarea', { class: 'rvText', oninput: function (e) { q.text = e.target.value; } }); text.value = q.text;
+
+      var answer;
+      if (q.type === 'mc') {
+        answer = h('div', null, [0, 1, 2, 3].map(function (k) {
+          return h('div', { class: 'toolbar', style: 'margin-bottom:4px' },
+            h('label', { class: 'check' },
+              h('input', { type: 'radio', name: 'rvCorrect' + idx, class: 'rvCorrect', value: String(k),
+                           checked: q.correctIndex === k, onchange: function () { q.correctIndex = k; } }),
+              'ABCD'[k] + (q.correctIndex === k ? ' (correct)' : '')),
+            h('input', { type: 'text', class: 'rvOpt', value: q.options[k], style: 'flex:1;min-width:200px',
+                         oninput: function (e) { q.options[k] = e.target.value; } }));
+        }), q.extraOptions ? h('div', { class: 'small', style: 'color:var(--warning)' },
+          'More than four options were printed; only the first four are kept.') : null);
+      } else if (q.type === 'short') {
+        var acc = h('textarea', { class: 'rvAccepted', style: 'min-height:60px', oninput: function (e) { q.accepted = e.target.value; } });
+        acc.value = q.accepted;
+        answer = h('div', { class: 'field' }, h('label', null, 'Accepted answers (one per line)'), acc);
+      } else {
+        var rub = h('textarea', { class: 'rvRubric', style: 'min-height:80px', oninput: function (e) { q.rubric = e.target.value; } });
+        rub.value = q.rubric;
+        answer = h('div', { class: 'field' }, h('label', null, 'Marking rubric (never shown to students)'), rub);
+      }
+
+      var imgSel = h('select', { class: 'rvImage', onchange: function (e) { q.imageHash = e.target.value; renderReview(); } },
+        h('option', { value: '' }, '(no figure)'),
+        I.images.map(function (im) { return h('option', { value: im.hash, selected: im.hash === q.imageHash }, im.name || im.hash.slice(0, 12)); }));
+
+      return h('div', { class: 'qcard' + (q.keep ? '' : ' wrong'), 'data-idx': idx },
+        h('div', { class: 'qhead' },
+          h('label', { class: 'check' },
+            h('input', { type: 'checkbox', class: 'rvKeep', checked: q.keep, onchange: function (e) { q.keep = e.target.checked; renderReview(); } }),
+            'Import  ' + (q.label || ('#' + (idx + 1)))),
+          taken ? h('span', { class: 'pill fault' }, 'id already exists in set ' + I.set) : null,
+          q.fromScheme ? h('span', { class: 'pill ok' }, 'from marking scheme') : null),
+        h('div', { class: 'toolbar' }, h('span', { class: 'small muted' }, 'Id'), idInput, typeSel,
+          h('span', { class: 'small muted' }, 'Points'), pts),
+        text,
+        q.figure ? h('div', { class: 'small muted', style: 'margin-top:6px' }, 'Mentions ' + q.figure) : null,
+        h('div', { class: 'toolbar', style: 'margin-top:6px' }, h('span', { class: 'small muted' }, 'Figure'), imgSel,
+          q.imageChoices > 1 && !q.imageHash ? h('span', { class: 'small', style: 'color:var(--warning)' },
+            q.imageChoices + ' figures match this question number: choose one') : null),
+        q.imageHash ? h('img', { src: API_BASE + '/img/' + q.imageHash, alt: 'Figure',
+                                 style: 'max-width:240px;max-height:160px;display:block;margin:6px 0' }) : null,
+        h('div', { style: 'margin-top:10px' }, answer));
+    });
+
+    var kept = I.questions.filter(function (q) { return q.keep; });
+    var noKey = kept.filter(function (q) { return q.type === 'mc' && q.correctIndex < 0; }).length;
+    var noRubric = kept.filter(function (q) { return q.type === 'openEnded' && !q.rubric.trim(); }).length;
+    box.appendChild(h('h3', { style: 'margin:16px 0 8px' }, 'Review (' + kept.length + ' of ' + I.questions.length + ' will be imported into set ' + I.set + ')'));
+    cards.forEach(function (c) { box.appendChild(c); });
+    box.appendChild(h('div', { class: 'card' },
+      noKey ? h('div', { class: 'msg err' }, noKey + ' multiple-choice question(s) have no correct answer chosen yet.') : null,
+      noRubric ? h('div', { class: 'msg info' }, noRubric + ' open-ended question(s) have no rubric; the AI will grade them without one.') : null,
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn', id: 'impSave', onclick: importQuestions }, 'Import ' + kept.length + ' question(s)'))));
+    document.documentElement.scrollTop = scrollY;
+    document.body.scrollTop = scrollY;
+  }
+
+  /** Validates the kept cards and sends them in one bulk call (the server allows 80). */
+  function importQuestions() {
+    var kept = I.questions.filter(function (q) { return q.keep; });
+    var problems = [];
+    var seen = {};
+    var payload = kept.map(function (q) {
+      var label = q.id || '(no id)';
+      if (!/^[A-Za-z0-9_.()-]{1,40}$/.test(q.id)) { problems.push(label + ': id must be 1-40 letters, digits or _ . ( ) -'); }
+      if (seen[q.id]) { problems.push(label + ': duplicate id'); }
+      seen[q.id] = true;
+      if (I.existing[I.set + '/' + q.id]) { problems.push(label + ': already exists in set ' + I.set); }
+      if (!String(q.text).trim()) { problems.push(label + ': empty text'); }
+      var out = { set: I.set, id: q.id, section: mainNumber(q.label) ? 'Q' + mainNumber(q.label) : '', type: q.type, points: q.points, text: q.text };
+      if (q.imageHash) { out.imageHash = q.imageHash; }
+      if (q.type === 'mc') {
+        if (q.options.some(function (o) { return !String(o).trim(); })) { problems.push(label + ': needs four options'); }
+        if (q.correctIndex < 0) { problems.push(label + ': choose the correct option'); }
+        out.options = q.options; out.correctIndex = q.correctIndex;
+      } else if (q.type === 'short') {
+        out.accepted = q.accepted.split('\n').map(function (a) { return a.trim(); }).filter(Boolean);
+        if (!out.accepted.length) { problems.push(label + ': needs at least one accepted answer'); }
+      } else {
+        out.rubric = q.rubric;
+      }
+      return out;
+    });
+    if (!payload.length) { return fail(new Error('Nothing selected to import.')); }
+    if (problems.length) { return fail(new Error('Fix before importing: ' + problems.slice(0, 6).join(' | '))); }
+    if (payload.length > 80) { return fail(new Error('Import at most 80 questions at a time: untick some.')); }
+
+    byId('impSave').disabled = true;
+    api('POST', '/api/admin/exams/' + encodeURIComponent(S.examId) + '/questions/bulk', { questions: payload }).then(function (d) {
+      S.questions = null; S.qSet = I.set; I = null;
+      banner('Imported ' + d.added + ' question(s). Check the marks total below against the paper.', 'okmsg');
+      questionsView();
+    }).catch(function (e) { byId('impSave').disabled = false; fail(e); });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings
+  // ---------------------------------------------------------------------------
+
+  /** "4.0:90, 3.7:80" -> [{grade:'4.0',min:90},...]; throws a readable Error on bad input. */
+  function parseBoundaries(text, setId) {
+    var out = [];
+    String(text).split(',').forEach(function (pair) {
+      if (!pair.trim()) { return; }
+      var parts = pair.split(':');
+      var min = parseInt((parts[1] || '').trim(), 10);
+      if (parts.length !== 2 || !parts[0].trim() || isNaN(min) || min < 0 || min > 100) {
+        throw new Error('Grade boundaries for set ' + setId + ': "' + pair.trim() + '" is not grade:minimum (example 4.0:90).');
+      }
+      out.push({ grade: parts[0].trim(), min: min });
+    });
+    return out;
+  }
+
+  function settingsView() {
+    var exam = currentExam();
+    var f = {};
+    function field(label, el, hint) {
+      return h('div', { class: 'field' }, h('label', null, label), el, hint ? h('div', { class: 'hint' }, hint) : null);
+    }
+    f.title = h('input', { type: 'text', id: 'sTitle', value: exam.title });
+    f.subtitle = h('input', { type: 'text', id: 'sSubtitle', value: exam.subtitle });
+    f.duration = h('input', { type: 'number', id: 'sDuration', min: 1, max: 600, value: String(exam.durationMin) });
+    f.examType = h('select', { id: 'sType', onchange: syncType },
+      [['igcse', 'IGCSE (fixed order, all questions)'], ['standard', 'Standard (sampling and shuffling allowed)']].map(function (t) {
+        return h('option', { value: t[0], selected: exam.examType === t[0] }, t[1]); }));
+    f.setMode = h('select', { id: 'sMode' },
+      [['single', 'One set (A)'], ['triple', 'Three sets (A, B, C)']].map(function (t) {
+        return h('option', { value: t[0], selected: exam.setMode === t[0] }, t[1]); }));
+    f.classes = h('input', { type: 'text', id: 'sClasses', value: exam.classOptions.join(', ') });
+    f.qps = h('input', { type: 'number', id: 'sQps', min: 0, value: String(exam.questionsPerSet) });
+    f.oe = h('input', { type: 'number', id: 'sOe', min: 0, value: String(exam.oePerSet) });
+    f.randomize = h('input', { type: 'checkbox', id: 'sRandom', checked: exam.randomize });
+    f.isDefault = h('input', { type: 'checkbox', id: 'sDefault', checked: exam.isDefault });
+
+    // questions_per_set and randomize are INDEPENDENT options; only the exam
+    // type (IGCSE ignores all three) switches them off.
+    function syncType() {
+      var igcse = f.examType.value === 'igcse';
+      f.qps.disabled = igcse; f.oe.disabled = igcse; f.randomize.disabled = igcse;
+    }
+
+    f.bounds = {}; f.cards = {};
+    var setRows = ['A', 'B', 'C'].map(function (s) {
+      var b = (exam.gradeBoundaries[s] || []).map(function (x) { return x.grade + ':' + x.min; }).join(', ');
+      var card = exam.setCards[s] || {};
+      f.bounds[s] = h('input', { type: 'text', class: 'sBounds', 'data-set': s, value: b });
+      f.cards[s] = {
+        label: h('input', { type: 'text', value: card.label || '' }),
+        max: h('input', { type: 'text', value: card.max_grade || '' }),
+        desc: h('input', { type: 'text', value: card.description || '' })
+      };
+      return h('div', { class: 'card' },
+        h('h3', null, 'Set ' + s),
+        h('div', { class: 'grid2' },
+          field('Card title', f.cards[s].label), field('Maximum grade shown', f.cards[s].max),
+          field('Description on the card', f.cards[s].desc)),
+        h('div', { style: 'margin-top:10px' },
+          field('Grade boundaries', f.bounds[s], 'grade:minimum percent, highest first. Example: 4.0:90, 3.7:80, 1.0:0')));
+    });
+
+    function save() {
+      var body;
+      try {
+        var gb = {}; var cards = {};
+        ['A', 'B', 'C'].forEach(function (s) {
+          var list = parseBoundaries(f.bounds[s].value, s);
+          if (list.length) { gb[s] = list; }
+          cards[s] = { label: f.cards[s].label.value, max_grade: f.cards[s].max.value, description: f.cards[s].desc.value };
+        });
+        body = {
+          title: f.title.value, subtitle: f.subtitle.value, durationMin: Number(f.duration.value),
+          examType: f.examType.value, setMode: f.setMode.value,
+          classOptions: f.classes.value.split(',').map(function (c) { return c.trim(); }).filter(Boolean),
+          questionsPerSet: Number(f.qps.value), oePerSet: Number(f.oe.value), randomize: f.randomize.checked,
+          isDefault: f.isDefault.checked, gradeBoundaries: gb, setCards: cards
+        };
+      } catch (e) { return fail(e); }
+      api('PUT', '/api/admin/exams/' + encodeURIComponent(exam.id), body)
+        .then(function () {
+          banner('Settings saved. Boundaries changed? Run "Recalculate grades" in Tools to update existing attempts.', 'okmsg');
+          return loadExams();
+        }).catch(fail);
+    }
+
+    var view = h('div', null,
+      h('div', { class: 'card' },
+        h('h3', null, 'Exam ' + exam.id),
+        h('div', { class: 'grid2' },
+          field('Title', f.title), field('Subtitle', f.subtitle), field('Duration (minutes)', f.duration),
+          field('Type', f.examType), field('Sets', f.setMode),
+          field('Classes (comma separated)', f.classes, 'Example: 11A, 11B, 11C')),
+        h('div', { class: 'grid2', style: 'margin-top:12px' },
+          field('Questions per set (0 = all)', f.qps), field('Open-ended guaranteed per set (0 = none)', f.oe),
+          h('div', { class: 'field' }, h('label', null, 'Shuffle'),
+            h('label', { class: 'check' }, f.randomize, 'Randomize question order')),
+          h('div', { class: 'field' }, h('label', null, 'Default'),
+            h('label', { class: 'check' }, f.isDefault, 'Serve this exam when a link has no &exam=')))),
+      setRows,
+      h('div', { class: 'toolbar' }, h('button', { class: 'btn', id: 'sSave', onclick: save }, 'Save settings')));
+    syncType();
+    return view;
+  }
+
+  function newExamView() {
+    var id = h('input', { type: 'text', id: 'neId', maxlength: 40 });
+    var title = h('input', { type: 'text', id: 'neTitle' });
+    var duration = h('input', { type: 'number', id: 'neDuration', value: '45', min: 1, max: 600 });
+    var type = h('select', { id: 'neType' },
+      h('option', { value: 'standard' }, 'Standard'), h('option', { value: 'igcse' }, 'IGCSE'));
+    var mode = h('select', { id: 'neMode' },
+      h('option', { value: 'single' }, 'One set (A)'), h('option', { value: 'triple' }, 'Three sets'));
+    function field(label, el, hint) {
+      return h('div', { class: 'field' }, h('label', null, label), el, hint ? h('div', { class: 'hint' }, hint) : null);
+    }
+    return h('div', { class: 'card' },
+      h('h3', null, 'New exam'),
+      h('p', { class: 'muted', style: 'margin-bottom:12px' }, 'It is created closed. Add questions, check the settings, then open it.'),
+      h('div', { class: 'grid2' },
+        field('Exam id', id, 'Letters, digits, _ and -. It goes in the student link as &exam=<id>.'),
+        field('Title', title), field('Duration (minutes)', duration), field('Type', type), field('Sets', mode)),
+      h('div', { class: 'toolbar', style: 'margin-top:14px' },
+        h('button', { class: 'btn', id: 'neCreate', onclick: function () {
+          api('POST', '/api/admin/exams', { id: id.value.trim(), title: title.value, durationMin: Number(duration.value),
+                                            examType: type.value, setMode: mode.value })
+            .then(function (d) { S.tab = 'questions'; banner('Exam created (closed).', 'okmsg'); return loadExams(d.exam.id); })
+            .catch(fail);
+        } }, 'Create exam'),
+        h('button', { class: 'btn secondary', onclick: function () { S.tab = 'attempts'; renderShell(); } }, 'Cancel')));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tools: bulk maintenance and the similarity report
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Runs a bulk endpoint to the end. The Worker handles at most 40 attempts
+   * per call (D1's per-invocation query limit) and returns `nextAfterId` until
+   * done, so this loops. `onProgress(changedSoFar)` updates the label.
+   */
+  function runBulk(path, onProgress) {
+    var total = 0;
+    function step(afterId) {
+      return api('POST', path, { afterId: afterId }).then(function (d) {
+        total += d.changed;
+        onProgress(total);
+        return d.nextAfterId ? step(d.nextAfterId) : total;
+      });
+    }
+    return step('');
+  }
+
+  function toolsView() {
+    var exam = currentExam();
+    var base = '/api/admin/exams/' + encodeURIComponent(exam.id);
+    var status = {};
+
+    function bulkCard(id, title, text, path, confirmText) {
+      status[id] = h('div', { class: 'muted small', id: id + 'Status' });
+      return h('div', { class: 'card' },
+        h('h3', null, title), h('p', { class: 'muted', style: 'margin-bottom:10px' }, text),
+        h('button', { class: 'btn', id: id, onclick: function (ev) {
+          if (confirmText && !window.confirm(confirmText)) { return; }
+          var btn = ev.target; btn.disabled = true; status[id].textContent = 'Working...';
+          runBulk(base + path, function (n) { status[id].textContent = 'Updated ' + n + ' attempt(s)...'; })
+            .then(function (n) { status[id].textContent = 'Done. ' + n + ' attempt(s) updated.'; S.attempts = null; })
+            .catch(function (e) { status[id].textContent = 'Stopped: ' + e.message; })
+            .then(function () { btn.disabled = false; });
+        } }, title),
+        status[id]);
+    }
+
+    // Resend: marks graded attempts pending; the server's minute sweep sends them.
+    var mailClass = h('select', { id: 'mailClass' }, h('option', { value: '' }, 'All classes'),
+      exam.classOptions.map(function (c) { return h('option', { value: c }, c); }));
+    var mailSet = h('select', { id: 'mailSet' }, h('option', { value: '' }, 'All sets'),
+      ['A', 'B', 'C'].map(function (x) { return h('option', { value: x }, 'Set ' + x); }));
+    var mailStatus = h('div', { class: 'muted small', id: 'mailStatus', style: 'margin-top:8px' });
+    var mailCard = h('div', { class: 'card' },
+      h('h3', null, 'Resend result emails'),
+      h('p', { class: 'muted', style: 'margin-bottom:10px' },
+        'Queues the results email again for graded attempts. They go out a few per minute, and only after each ' +
+        "student's deadline has passed. Use it after a failed delivery or a corrected grade."),
+      h('div', { class: 'toolbar' }, mailClass, mailSet,
+        h('button', { class: 'btn', id: 'mailResend', onclick: function () {
+          if (!window.confirm('Queue the results email again for the selected students?')) { return; }
+          api('POST', base + '/resend-emails', { class: mailClass.value, set: mailSet.value }).then(function (d) {
+            mailStatus.textContent = d.queued + ' email(s) queued. They are sent within a few minutes.';
+            S.attempts = null;
+          }).catch(function (e) {
+            mailStatus.textContent = e.code === 'email_disabled'
+              ? 'Email is not configured on the server yet (MAIL_RELAY_URL).' : 'Failed: ' + e.message;
+          });
+        } }, 'Resend emails')),
+      mailStatus);
+
+    var simBox = h('div', { id: 'simBox', class: 'muted' }, 'Loading...');
+    var view = h('div', null,
+      bulkCard('recalc', 'Recalculate grades',
+        'Recomputes totals and grades of every graded attempt from the current grade boundaries and your overrides. ' +
+        'Uses no AI.', '/recalculate'),
+      bulkCard('regradeMc', 'Regrade multiple choice',
+        'Re-marks every multiple-choice answer against the CURRENT answer key (use it after correcting a wrong key). ' +
+        'Uses no AI; open-ended scores are untouched.', '/regrade-mc',
+        'Re-mark all multiple-choice answers of this exam with the current key?'),
+      mailCard,
+      h('div', { class: 'card' },
+        h('h3', null, 'Similarity report'),
+        h('p', { class: 'muted', style: 'margin-bottom:10px' },
+          'Compares students of the same set: shared phrases in open-ended answers and identical wrong multiple-choice ' +
+          'answers. Computed on the server without AI, so it costs no tokens. A flagged pair is a reason to read both ' +
+          'papers, not proof of copying.'),
+        h('button', { class: 'btn', id: 'simRun', onclick: runSimilarity }, 'Compute report'),
+        h('div', { style: 'margin-top:12px' }, simBox)));
+
+    loadSimilarity();
+    return view;
+
+    // -- similarity helpers (closures over `base` and `simBox`) --
+    function runSimilarity() {
+      simBox.textContent = 'Queued...';
+      api('POST', base + '/similarity', {}).then(function () { pollSimilarity(++S.simPoll, 0); }).catch(fail);
+    }
+    function pollSimilarity(token, tries) {
+      if (token !== S.simPoll) { return; }               // the teacher moved to another view
+      api('GET', base + '/similarity').then(function (d) {
+        if (token !== S.simPoll) { return; }
+        if (d.status === 'queued' && tries < 60) { setTimeout(function () { pollSimilarity(token, tries + 1); }, 2500); return; }
+        renderSimilarity(d);
+      }).catch(fail);
+    }
+    function loadSimilarity() {
+      S.simPoll++;
+      pollSimilarity(S.simPoll, 0);
+    }
+    function renderSimilarity(d) {
+      clear(simBox);
+      simBox.className = '';
+      if (d.status === 'none') { simBox.className = 'muted'; simBox.textContent = 'No report yet.'; return; }
+      if (d.status === 'error') { simBox.appendChild(h('div', { class: 'msg err' }, d.error || 'The report failed.')); return; }
+      if (d.status === 'queued') { simBox.className = 'muted'; simBox.textContent = 'Still computing; press the button again in a moment.'; return; }
+      var r = d.report;
+      simBox.appendChild(h('div', { class: 'muted small', style: 'margin-bottom:8px' },
+        'Computed ' + fmtDateTime(d.computedAt) + ' · ' + r.attemptsCompared + ' graded attempts compared · ' +
+        r.pairsFlagged + ' pair(s) flagged'));
+      if (!r.pairs.length) { simBox.appendChild(h('div', null, 'No pairs flagged.')); return; }
+      r.pairs.forEach(function (p) {
+        simBox.appendChild(h('div', { class: 'qcard wrong' },
+          h('div', { class: 'qhead' },
+            h('span', null, p.a.name + ' (' + p.a.class + ')  <->  ' + p.b.name + ' (' + p.b.class + ') · set ' + p.set),
+            h('span', null,
+              h('button', { class: 'btn secondary small', onclick: function () { openAttempt(p.a.id); } }, 'Open first'), ' ',
+              h('button', { class: 'btn secondary small', onclick: function () { openAttempt(p.b.id); } }, 'Open second'))),
+          p.open.map(function (o) {
+            return h('div', { class: 'small' }, o.qid + ': ' + Math.round(o.score * 100) + '% overlap, ' + o.common +
+              ' shared phrases, e.g. "' + o.phrases.slice(0, 2).join('", "') + '"');
+          }),
+          p.mc.flagged ? h('div', { class: 'small' }, 'Multiple choice: ' + p.mc.sharedWrong +
+            ' identical WRONG answers (they got ' + p.mc.wrongA + ' and ' + p.mc.wrongB + ' wrong)') : null));
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Teachers (admin role only; the server enforces it too)
+  // ---------------------------------------------------------------------------
+
+  function loadTeachers() {
+    var view = byId('view');
+    mount(view, h('div', { class: 'card muted' }, 'Loading teachers...'));
+    api('GET', '/api/admin/teachers').then(function (d) {
+      var email = h('input', { type: 'text', id: 'tEmail', placeholder: 'name@marymount.edu.co', style: 'min-width:260px' });
+      var name = h('input', { type: 'text', id: 'tName', placeholder: 'Name (optional)' });
+      var role = h('select', { id: 'tRole' }, h('option', { value: 'teacher' }, 'Teacher'), h('option', { value: 'admin' }, 'Admin'));
+      var exempt = h('input', { type: 'checkbox', id: 'tExempt' });
+      mount(view, h('div', null,
+        h('div', { class: 'card' },
+          h('h3', null, 'Add a teacher'),
+          h('div', { class: 'toolbar' }, email, name, role,
+            h('label', { class: 'check' }, exempt, 'May retake exams (testing)'),
+            h('button', { class: 'btn', id: 'tAdd', onclick: function () {
+              api('POST', '/api/admin/teachers', { email: email.value, name: name.value, role: role.value, retakeExempt: exempt.checked })
+                .then(function () { banner('Teacher saved.', 'okmsg'); loadTeachers(); }).catch(fail);
+            } }, 'Save'))),
+        h('div', { class: 'table-wrap' }, h('table', { id: 'teachersTable' },
+          h('thead', null, h('tr', null, ['Email', 'Name', 'Role', 'Retake', ''].map(function (t) { return h('th', null, t); }))),
+          h('tbody', null, d.teachers.map(function (t) {
+            return h('tr', null, h('td', null, t.email), h('td', null, t.name), h('td', null, t.role),
+              h('td', null, t.retakeExempt ? 'yes' : ''),
+              h('td', null, t.email === S.email ? h('span', { class: 'muted small' }, 'you') :
+                h('button', { class: 'btn danger small', onclick: function () {
+                  if (!window.confirm('Remove ' + t.email + ' from the teachers list?')) { return; }
+                  api('DELETE', '/api/admin/teachers/' + encodeURIComponent(t.email))
+                    .then(function () { loadTeachers(); }).catch(fail);
+                } }, 'Remove')));
+          }))))));
+    }).catch(fail);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Start-up
+  // ---------------------------------------------------------------------------
+
+  byId('signOutBtn').addEventListener('click', function () { signOut(''); });
+
+  // Resume a session from this tab if one is still valid.
+  var saved = storeGet();
+  if (saved && saved.session && saved.expiresAt > Date.now()) {
+    S.session = saved.session; S.email = saved.email; S.role = saved.role; S.expiresAt = saved.expiresAt;
+    enterApp();
+  } else {
+    initGoogle();
+  }
+
+})();
+</script>
+</body>
+</html>

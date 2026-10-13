@@ -1,0 +1,15 @@
+{
+  "name": "examgrader-api",
+  "private": true,
+  "type": "module",
+  "description": "Exam Grader backend on Cloudflare Workers + D1 + R2 + Queues. See API.md and schema.sql.",
+  "scripts": {
+    "test": "node --test --test-force-exit --no-warnings tests/*.test.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.2",
+    "wrangler": "^4.148.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "examgrader-loadtest",
+  "private": true,
+  "description": "Throwaway Worker used only to load-test Cloudflare before migrating the exam backend.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.148.0"
+  }
+}
