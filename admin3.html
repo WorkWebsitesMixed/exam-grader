@@ -590,6 +590,22 @@
     return h('div', { class: 'answer pre' }, raw);
   }
 
+  /**
+   * Penalty editor. The integrity log below stays untouched as evidence; this
+   * only changes the points taken (0 = none). Use it for false positives.
+   */
+  function penaltyControl(a) {
+    var input = h('input', { type: 'number', id: 'penaltyInput', min: 0, max: 4, step: 1, value: String(a.penalty),
+                             style: 'width:70px' });
+    return h('div', { class: 'toolbar', style: 'margin:10px 0 0' },
+      h('span', { class: 'small muted' }, 'Penalty points taken (0 removes it):'), input,
+      h('button', { class: 'btn small', id: 'penaltySave', onclick: function () {
+        api('PUT', '/api/admin/attempts/' + encodeURIComponent(a.id) + '/penalty', { penalty: Number(input.value) })
+          .then(function () { S.attempts = null; banner('Penalty updated.', 'okmsg'); openAttempt(a.id); })
+          .catch(fail);
+      } }, 'Save penalty'));
+  }
+
   function attemptDetail(a) {
     var results = a.results || {};
     var integ = a.integrity;
@@ -667,7 +683,8 @@
             STATUS_LABEL[a.status] || a.status),
           a.maxScore ? h('span', { style: 'margin-left:12px' },
             'Score ' + a.totalScore + '/' + a.maxScore + ' (' + a.percentage + '%) · grade ' + a.finalGrade +
-            ' · multiple choice ' + a.mcScore + ' · open ' + a.openScore + ' · penalty -' + integ.penalty) : null),
+            ' · multiple choice ' + a.mcScore + ' · open ' + a.openScore + ' · penalty -' + a.penalty) : null),
+        a.status === 'graded' ? penaltyControl(a) : null,
         a.gradingError ? h('div', { class: 'msg err', style: 'margin-top:10px' }, a.gradingError) : null),
       h('div', { class: 'card' },
         h('h3', null, 'Integrity: ' + integ.faults + ' fault(s), ' + integ.warnings + ' warning(s), away ' + mmss(integ.awayMs) +

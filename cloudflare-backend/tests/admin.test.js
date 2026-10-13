@@ -136,3 +136,28 @@ test('only one exam can be the default', async () => {
   const rows = w.env.DB.db.prepare('SELECT id, is_default FROM exams ORDER BY id').all();
   assert.deepEqual(rows.map((r) => r.is_default), [0, 1]);
 });
+
+test('penalty can be removed for a false positive: totals and grade follow, evidence stays, recalculate keeps it', async () => {
+  const { w, auth } = await adminWorld();
+  const id = await gradedAttempt(w, 'ana@marymount.edu.co', { Q1: 1, Q2: 'Paris', Q3: 'Rigid triangles.' });
+  // A paste fault was recorded and cost one point.
+  const events = [{ seq: 0, t: w.clock.t, type: 'paste', len: 50 }];
+  w.env.DB.db.prepare('UPDATE attempts SET events = ?, faults = 1, penalty = 1').run(JSON.stringify(events));
+  await w.call('POST', '/api/admin/exams/EX1/recalculate', { headers: auth, body: {} });
+  assert.equal(w.env.DB.db.prepare('SELECT total_score AS t FROM attempts').get().t, 8);   // 9 - 1
+
+  const r = await w.call('PUT', `/api/admin/attempts/${id}/penalty`, { headers: auth, body: { penalty: 0 } });
+  assert.equal(r.json.totalScore, 9);
+  assert.equal(r.json.percentage, 100);
+  const row = w.env.DB.db.prepare('SELECT * FROM attempts').get();
+  assert.equal(row.total_score, 9);
+  assert.equal(JSON.parse(row.events).length, 1);            // evidence kept
+
+  await w.call('POST', '/api/admin/exams/EX1/recalculate', { headers: auth, body: {} });
+  assert.equal(w.env.DB.db.prepare('SELECT total_score AS t FROM attempts').get().t, 9);
+
+  const bad = await w.call('PUT', `/api/admin/attempts/${id}/penalty`, { headers: auth, body: { penalty: 7 } });
+  assert.equal(bad.status, 400);
+  const noSession = await w.call('PUT', `/api/admin/attempts/${id}/penalty`, { body: { penalty: 0 } });
+  assert.equal(noSession.status, 401);
+});

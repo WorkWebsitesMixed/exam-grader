@@ -17,6 +17,7 @@ import * as student from './student.js';
 import * as admin from './admin.js';
 import { uploadImage, serveImage, listImages } from './images.js';
 import { createJob, runJob, getJob } from './jobs.js';
+import { exportIndex, exportExam } from './export.js';
 import { handleQueueBatch, runSweep } from './queue.js';
 
 /**
@@ -52,6 +53,7 @@ const ROUTES = [
   { method: 'GET',  path: '/api/admin/attempts',               handler: admin.listAttempts, admin: true },
   { method: 'GET',  path: '/api/admin/attempts/:id',           handler: admin.getAttempt, admin: true },
   { method: 'PUT',  path: '/api/admin/attempts/:id/overrides', handler: admin.setOverrides, admin: true, body: true },
+  { method: 'PUT',  path: '/api/admin/attempts/:id/penalty',   handler: admin.setPenalty, admin: true, body: true },
   { method: 'DELETE', path: '/api/admin/attempts/:id',         handler: admin.deleteAttempt, admin: true },
   { method: 'POST', path: '/api/admin/attempts/:id/reset',     handler: admin.deleteAttempt, admin: true },
   { method: 'POST', path: '/api/admin/exams/:id/recalculate',  handler: admin.recalculate, admin: true, body: true },
@@ -68,6 +70,10 @@ const ROUTES = [
   { method: 'POST', path: '/api/admin/jobs', handler: createJob, admin: true },
   { method: 'POST', path: '/api/admin/jobs/:id/run', handler: runJob, admin: true, body: true },
   { method: 'GET',  path: '/api/admin/jobs/:id', handler: getJob, admin: true },
+
+  // --- export for the Sheets archive / backup (own key, not an admin session) ---
+  { method: 'GET', path: '/api/export/index', handler: exportIndex },
+  { method: 'GET', path: '/api/export/exams/:id', handler: exportExam },
 
   // --- admin: teachers ---
   { method: 'GET',  path: '/api/admin/teachers',        handler: admin.listTeachers, admin: true },

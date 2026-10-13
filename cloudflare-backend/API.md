@@ -116,7 +116,7 @@ Implemented (2026-10-12): `src/mail.js` builds the message (all student text HTM
 ## 9. Archive and history
 
 - Existing submissions stay in the Google Sheet as an **archive** (decision 2026-10-10). They are not imported into D1; `results.html` on the new backend shows only attempts taken after cutover.
-- New results are exported to a Sheet by an Apps Script time trigger that calls `GET /api/admin/exams/:id/export`, so teachers keep a spreadsheet view. Optional later: the Raspberry Pi pulls the same endpoint nightly.
+- New results are exported to a Sheet by an Apps Script time trigger (`tools/sheet-archive/`). Implemented (2026-10-12) in `src/export.js`: `GET /api/export/index` (exams with attempts, each with a `digest` that changes on a new attempt, regrade, override or delete) and `GET /api/export/exams/:id?after=<attempt id>&limit=25` (attempts in pages of at most 25, each with its per-question answers; `nextAfterId` is null on the last page). Auth is `Authorization: Bearer <EXPORT_KEY>` (a Worker secret of its own; an admin session does not work there); without the secret the routes answer 404. Pages are small because a request has 10 ms of CPU and `results` JSON must be parsed. The archive script writes two tabs per exam and only when the digest changed; student text goes into Plain-text columns so it can never be evaluated as a formula. The Raspberry Pi can pull the same routes with `curl` (see `tools/sheet-archive/README.md`).
 
 ## 10. Free-tier budget (my estimate; assumptions stated)
 

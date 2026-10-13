@@ -553,3 +553,18 @@ test('import review: picking a figure re-renders the cards but keeps the scroll 
   assert.equal(page.doc.documentElement.scrollTop, 640);
   page.win.close();
 });
+
+test('attempt detail: the penalty can be removed from the panel and the stored value is what is shown', async () => {
+  const w = await setup();
+  db(w).prepare('UPDATE attempts SET penalty = 1, faults = 1').run();
+  const page = await signedIn(w);
+  await until(() => $(page, '#attemptsTable tbody tr[data-id]'), 'row');
+  $(page, '#attemptsTable tbody tr[data-id]').click();
+  await until(() => $(page, '#penaltyInput'), 'penalty control');
+  assert.match(text(page, '#view'), /penalty -1/);
+  $(page, '#penaltyInput').value = '0';
+  $(page, '#penaltySave').click();
+  await until(() => db(w).prepare('SELECT penalty FROM attempts').get().penalty === 0, 'penalty saved');
+  await until(() => /penalty -0/.test(text(page, '#view')), 'detail reloaded');
+  page.win.close();
+});

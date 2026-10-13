@@ -368,6 +368,27 @@ export async function setOverrides(c) {
   return { body: { success: true, finalGrade: t.finalGrade, percentage: t.percentage, openScore: t.openScore } };
 }
 
+/**
+ * Sets the anti-cheating penalty of a graded attempt (0 removes it). Use it
+ * when the integrity log shows a false positive, for example a right-click on
+ * a spell-check suggestion. The event log is NOT touched: it stays as evidence,
+ * and a later "recalculate" keeps the penalty chosen here because totals use
+ * the stored value.
+ */
+export async function setPenalty(c) {
+  const a = await requireAttempt(c.env, c.params.id);
+  if (a.status !== 'graded') { throw new HttpError(409, 'not_graded', 'Only graded attempts can be changed'); }
+  const penalty = Number(c.body.penalty);
+  if (!Number.isInteger(penalty) || penalty < 0 || penalty > 4) {
+    throw new HttpError(400, 'bad_request', 'penalty must be a whole number from 0 to 4');
+  }
+  const { exam, paperQuestions } = await paperContext(c.env, a);
+  await c.env.DB.prepare('UPDATE attempts SET penalty = ? WHERE id = ?').bind(penalty, a.id).run();
+  const t = await writeTotals(c.env, { ...a, penalty }, exam, paperQuestions,
+                              JSON.parse(a.results || '{}'), JSON.parse(a.overrides || '{}'));
+  return { body: { success: true, penalty, totalScore: t.totalScore, percentage: t.percentage, finalGrade: t.finalGrade } };
+}
+
 /** Deletes an attempt. The student can then start the exam again (this is also "reset"). */
 export async function deleteAttempt(c) {
   await c.env.DB.prepare('DELETE FROM attempts WHERE id = ?').bind(c.params.id).run();
