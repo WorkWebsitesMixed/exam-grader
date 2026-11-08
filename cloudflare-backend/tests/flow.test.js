@@ -257,7 +257,7 @@ test('/api/exam carries the header: goal from grade+term, school scale for every
   assert.equal(cfg.header_school, 'Marymount School - Medellín');
   assert.equal(cfg.header_grade, '11th Grade');
   assert.equal(cfg.header_term, 'Term I – 2026');
-  assert.equal(cfg.header_teacher, 'Andrés Forero');
+  assert.equal(cfg.header_teacher, 'Andrés Forero - Design & Technology');
   assert.match(cfg.header_goals, /^Launches the Component 2 coursework project/);
   assert.match(cfg.header_directions, /Keep only the exam page open/);
   assert.match(cfg.grade_boundaries_A, /^4\.0:90,3\.7:80/);   // no per-exam table -> school scale
@@ -267,7 +267,7 @@ test('/api/exam carries the header: goal from grade+term, school scale for every
   w.clock.t += 60 * 1000;   // past the 30 s public cache
   const cfg2 = (await w.call('GET', '/api/exam')).json.config;
   assert.equal(cfg2.header_goals, 'Custom goal.');
-  assert.equal(cfg2.header_teacher, 'Someone Else');
+  assert.equal(cfg2.header_teacher, 'Someone Else - Design & Technology');
 });
 
 test('a graded result carries the level of the final grade', async () => {

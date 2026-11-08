@@ -80,6 +80,7 @@ function examFields(body) {
   }
   if (body.termYear !== undefined) { out.term_year = body.termYear === null || body.termYear === '' ? null : clampInt(body.termYear, 2020, 2100); }
   if (body.teacher !== undefined) { out.teacher = text(body.teacher, 120); }
+  if (body.subject !== undefined) { out.subject = text(body.subject, 120); }
   if (body.directions !== undefined) { out.directions = text(body.directions, 2000); }
   if (body.goalsOverride !== undefined) { out.goals_override = text(body.goalsOverride, 2000); }
   if (body.isDefault !== undefined) { out.is_default = body.isDefault ? 1 : 0; }
@@ -118,7 +119,7 @@ function examView(e) {
     durationMin: e.duration_min, examType: e.exam_type, setMode: e.set_mode,
     classOptions: JSON.parse(e.class_options || '[]'), questionsPerSet: e.questions_per_set,
     oePerSet: e.oe_per_set, randomize: !!e.randomize,
-    gradeLevel: e.grade_level, term: e.term, termYear: e.term_year, teacher: e.teacher,
+    gradeLevel: e.grade_level, term: e.term, termYear: e.term_year, teacher: e.teacher, subject: e.subject,
     // directions: what students will see (the stored text, or the default when empty);
     // goalsDefault: the department goal for this grade+term, shown as a hint in Settings.
     directions: e.directions || DEFAULT_DIRECTIONS, goalsOverride: e.goals_override,
@@ -160,7 +161,7 @@ export async function createExam(c) {
           f.questions_per_set || 0, f.oe_per_set || 0, f.randomize || 0,
           f.grade_boundaries || '{}', f.set_cards || '{}', now, now).run();
   // Header fields are not in the INSERT above (they have column defaults); set what was supplied.
-  const extra = ['grade_level', 'term', 'term_year', 'teacher', 'directions', 'goals_override'].filter((k) => f[k] !== undefined);
+  const extra = ['grade_level', 'term', 'term_year', 'teacher', 'subject', 'directions', 'goals_override'].filter((k) => f[k] !== undefined);
   if (extra.length) {
     await env.DB.prepare('UPDATE exams SET ' + extra.map((k) => k + ' = ?').join(', ') + ' WHERE id = ?')
       .bind(...extra.map((k) => f[k]), id).run();

@@ -34,7 +34,8 @@ export function examHeader(exam, now) {
     title: exam.title,
     grade: gradeLabel(exam.grade_level),
     term: exam.term ? 'Term ' + exam.term + ' – ' + year : '',
-    teacher: exam.teacher || '',
+    // One line "Teacher - Subject"; either part may be edited per exam so another teacher can use the page.
+    teacher: [exam.teacher, exam.subject].filter(Boolean).join(' - '),
     directions: exam.directions || DEFAULT_DIRECTIONS,
     goals: exam.goals_override || goalFor(exam.grade_level, exam.term),
   };

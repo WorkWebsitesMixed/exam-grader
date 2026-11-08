@@ -96,8 +96,18 @@ test('page loads the exam from the Worker, shows images from /img, and applies t
   await signIn(w, page);
   assert.equal(page.requests[0].url, `${BASE}/api/exam?exam=EX1`);
   // The sheet's table is built for THIS paper: the seeded set totals 10 marks, so 90% (89.5% rounds up) needs 9.
-  const sheet = page.doc.getElementById('examSheetInfo');
+  // The step before the exam (class selection) shows no sheet: only the anti-cheating rules.
+  assert.equal(page.doc.getElementById('examSheetInfo'), null);
+  assert.equal(page.doc.getElementById('examSheetExam').textContent, '');
+  await startExam(page);
+  const sheet = page.doc.getElementById('examSheetExam');
   assert.match(sheet.textContent, /Total marks: 10/);
+  assert.match(sheet.textContent, /Group: 10A/);                // from the class the student picked
+  assert.match(sheet.textContent, /Grade: 10/);                 // 10, 11 or 12 read from the group
+  assert.match(sheet.textContent, /Andrés Forero - Design & Technology/);
+  assert.doesNotMatch(sheet.textContent, /Level:/);             // no Level field on the sheet; the table keeps its Level column
+  assert.match(sheet.textContent, /How to answer calculation questions/);
+  assert.equal(page.doc.querySelector('.question-marks').textContent.replace(/\d+/, 'N'), '[N marks]');
   const rows = [...sheet.querySelectorAll('.grading-table tr')].map((r) => r.textContent);
   assert.ok(rows.includes('4.0Excelling90%9'), rows.join(' | '));
   assert.ok(rows.includes('1.0Approaching0%0'), rows.join(' | '));

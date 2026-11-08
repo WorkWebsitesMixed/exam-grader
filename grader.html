@@ -455,22 +455,6 @@
                 </ul>
             </div>
 
-            <div id="examSheetInfo"></div>
-
-            <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:25px;">
-                <div
-                    style="flex:1; min-width:300px; background:#F0F7FF; border-left:4px solid var(--primary-color); padding:20px; border-radius:8px;">
-                    <h3 style="color:var(--primary-color); margin-bottom:10px; font-size:16px;">📐 How to Answer Math
-                    </h3>
-                    <p style="font-size:14px;">Show your working process to earn partial credit. Example:</p>
-                    <div
-                        style="background:white; padding:10px; border:1px solid var(--border-color); border-radius:6px; font-family:monospace; font-size:13px; margin-top:10px;">
-                        Formula: I = V / R<br>Math: I = 7.4 / 330<br>Answer: 0.022A
-                    </div>
-                </div>
-
-            </div>
-
             <form id="studentInfoForm">
                 <div class="name-row">
                     <div>
@@ -1005,7 +989,7 @@
             var titles = sheetEl('div', undefined, 'sheet-titles');
             titles.appendChild(sheetEl('div', headerCfg.header_school, 'school'));
             titles.appendChild(sheetEl('div', headerCfg.exam_title || '', 'exam'));
-            [headerCfg.header_grade, headerCfg.header_term, headerCfg.header_teacher].forEach(function (t) {
+            [headerCfg.header_term, headerCfg.header_teacher].forEach(function (t) {
                 if (t) { titles.appendChild(sheetEl('div', t)); }
             });
             top.appendChild(titles);
@@ -1014,14 +998,14 @@
             var who = sheetEl('div', undefined, 'sheet-line');
             who.appendChild(sheetField("Student's name", (currentFirstName + ' ' + currentLastName).trim()));
             who.appendChild(sheetField('Group', currentStudentClass || ''));
+            // Grade = 10, 11 or 12, read from the group the student chose ("11A" -> 11).
+            who.appendChild(sheetField('Grade', (/^\d{1,2}/.exec(currentStudentClass || '') || [''])[0]));
             who.appendChild(sheetField('Date', new Date().toLocaleDateString('en-GB')));
             sheet.appendChild(who);
 
             var test = sheetEl('div', undefined, 'sheet-line');
             test.appendChild(sheetField('Duration', examConfig.durationMinutes + ' minutes'));
             test.appendChild(sheetField('Total marks', total ? String(total) : ''));
-            test.appendChild(sheetField('Grade', ''));   // filled in the results, not on the paper
-            test.appendChild(sheetField('Level', ''));
             sheet.appendChild(test);
 
             if (headerCfg.header_directions) {
@@ -1032,6 +1016,17 @@
                 });
                 sheet.appendChild(ul);
             }
+            // Replaces the old "How to Answer Math" card: marks go to working, not only to the answer.
+            sheet.appendChild(sheetEl('div', 'How to answer calculation questions:', 'sheet-sub'));
+            var steps = document.createElement('ol');
+            steps.style.cssText = 'margin-left:22px; font-size:14px;';
+            ['Write the formula.', 'Substitute the values, with their units.', 'Calculate.',
+             'Write the final answer with its unit. Marks are given for the working, not only the answer.']
+                .forEach(function (t) { steps.appendChild(sheetEl('li', t)); });
+            sheet.appendChild(steps);
+            var ex = sheetEl('div', 'Example: I = V / R   →   I = 7.4 V / 330 Ω   →   I = 0.022 A (22 mA)');
+            ex.style.cssText = 'background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:8px 10px; font-family:monospace; font-size:13px; margin:6px 0;';
+            sheet.appendChild(ex);
             if (headerCfg.header_goals) {
                 sheet.appendChild(sheetEl('div', 'Learning goals assessed:', 'sheet-sub'));
                 sheet.appendChild(sheetEl('p', headerCfg.header_goals));
@@ -1055,8 +1050,8 @@
             host.appendChild(sheet);
         }
 
+        // The sheet lives only inside the exam page, above the questions.
         function renderSheets() {
-            buildSheet(document.getElementById('examSheetInfo'));
             buildSheet(document.getElementById('examSheetExam'));
         }
 
@@ -1065,7 +1060,6 @@
             selectedSet = setLetter;
             document.getElementById('setSelectionScreen').classList.remove('active');
 
-            renderSheets();
             document.getElementById('studentInfoScreen').classList.add('active');
         }
 

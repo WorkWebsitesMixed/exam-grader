@@ -1283,6 +1283,7 @@
     f.termYear = h('input', { type: 'number', id: 'sTermYear', min: 2020, max: 2100, placeholder: 'current year',
                               value: exam.termYear == null ? '' : String(exam.termYear) });
     f.teacher = h('input', { type: 'text', id: 'sTeacher', value: exam.teacher || '' });
+    f.subject = h('input', { type: 'text', id: 'sSubject', value: exam.subject || '' });
     f.directions = h('textarea', { id: 'sDirections', rows: 6 }); f.directions.value = exam.directions || '';
     f.goalsOverride = h('textarea', { id: 'sGoals', rows: 3, placeholder: 'Leave empty to use the department goal for the grade and term' });
     f.goalsOverride.value = exam.goalsOverride || '';
@@ -1345,7 +1346,7 @@
           examType: f.examType.value, setMode: f.setMode.value,
           gradeLevel: f.gradeLevel.value, term: f.term.value,
           termYear: f.termYear.value ? Number(f.termYear.value) : null,
-          teacher: f.teacher.value, directions: f.directions.value, goalsOverride: f.goalsOverride.value,
+          teacher: f.teacher.value, subject: f.subject.value, directions: f.directions.value, goalsOverride: f.goalsOverride.value,
           opensAt: f.opensAt.value ? new Date(f.opensAt.value).getTime() : null,
           closesAt: f.closesAt.value ? new Date(f.closesAt.value).getTime() : null,
           classOptions: f.classes.value.split(',').map(function (c) { return c.trim(); }).filter(Boolean),
@@ -1372,7 +1373,8 @@
         h('h3', { style: 'margin-top:18px' }, 'Exam header'),
         h('div', { class: 'grid2' },
           field('Grade', f.gradeLevel), field('Term', f.term),
-          field('Year', f.termYear, 'Printed as "Term I – 2026".'), field('Teacher', f.teacher)),
+          field('Year', f.termYear, 'Printed as "Term I – 2026".'), field('Teacher', f.teacher),
+          field('Subject', f.subject, 'Printed after the teacher: "Andrés Forero - Design & Technology".')),
         field('Directions (one line per rule)', f.directions),
         field('Learning goals override', f.goalsOverride, undefined), goalHint,
         h('div', { class: 'grid2', style: 'margin-top:12px' },

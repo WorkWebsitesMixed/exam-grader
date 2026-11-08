@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS exams (
   term             TEXT NOT NULL DEFAULT '',          -- 'I', 'II', 'III' or ''
   term_year        INTEGER,                           -- NULL = year the exam is opened
   teacher          TEXT NOT NULL DEFAULT 'Andrés Forero',
+  subject          TEXT NOT NULL DEFAULT 'Design & Technology',
   directions       TEXT NOT NULL DEFAULT '',          -- '' = the default text in header.js
   goals_override   TEXT NOT NULL DEFAULT '',
   created_at       INTEGER NOT NULL,

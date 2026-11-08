@@ -219,6 +219,7 @@ test('settings: the header fields save, directions default is shown, department 
   await until(() => $(page, '#sSave'), 'settings form');
   assert.match($(page, '#sDirections').value, /Keep only the exam page open/);   // default text prefilled
   assert.equal($(page, '#sTeacher').value, 'Andrés Forero');
+  assert.equal($(page, '#sSubject').value, 'Design & Technology');
 
   $(page, '#sGrade').value = '10';
   $(page, '#sTerm').value = 'II';
