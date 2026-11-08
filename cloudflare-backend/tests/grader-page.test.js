@@ -100,6 +100,7 @@ test('page loads the exam from the Worker, shows images from /img, and applies t
   assert.equal(page.doc.getElementById('examSheetInfo'), null);
   assert.equal(page.doc.getElementById('examSheetExam').textContent, '');
   await startExam(page);
+  assert.equal(page.doc.getElementById('closeNoticeInfo').style.display, 'none');   // no schedule -> no notice
   const sheet = page.doc.getElementById('examSheetExam');
   assert.match(sheet.textContent, /Total marks: 10/);
   assert.match(sheet.textContent, /Group: 10A/);                // from the class the student picked
@@ -217,5 +218,21 @@ test('an unknown exam id shows a clear message instead of retrying forever', asy
   const page = openPage(w, `?src=${BASE}&exam=NOPE`);
   await until(() => /not found/i.test(page.doc.getElementById('loadingScreen').textContent), 'not found message');
   assert.equal(page.requests.length, 1);
+  page.win.close();
+});
+
+test('a scheduled exam shows the red closing notice before the start and the exact submit time after a late start', async () => {
+  const w = await setup();
+  const closes = w.clock.t + 10 * 60 * 1000;      // 10 minutes left of a 45-minute exam
+  w.env.DB.db.prepare('UPDATE exams SET closes_at = ? WHERE id = ?').run(closes, 'EX1');
+  const page = openPage(w, `?src=${BASE}&exam=EX1`);
+  await signIn(w, page);
+  const info = page.doc.getElementById('closeNoticeInfo');
+  assert.equal(info.style.display, 'block');
+  assert.match(info.textContent, /closes at \d\d:\d\d.*submitted automatically/s);
+  await startExam(page);
+  const notice = page.doc.getElementById('closeNoticeExam');
+  assert.equal(notice.style.display, 'block');
+  assert.match(notice.textContent, /submitted automatically at \d\d:\d\d/);
   page.win.close();
 });

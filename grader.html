@@ -337,6 +337,7 @@
         .sheet-line .blank { display: inline-block; min-width: 90px; border-bottom: 1px solid var(--text-muted); }
         .sheet-sub { font-weight: 600; margin: 14px 0 4px; font-size: 14px; }
         .exam-sheet ul { margin-left: 22px; font-size: 14px; }
+        .close-notice { color: var(--error-color); font-weight: bold; font-size: 14px; margin: 0 0 16px; padding: 10px 14px; border: 2px solid var(--error-color); border-radius: 8px; background: #FDEDEC; }
         .question-marks { font-weight: normal; font-size: 13px; color: var(--text-muted); margin-left: 8px; }
         .grading-table {
             width: 100%;
@@ -455,6 +456,8 @@
                 </ul>
             </div>
 
+            <p id="closeNoticeInfo" class="close-notice" style="display:none;"></p>
+
             <form id="studentInfoForm">
                 <div class="name-row">
                     <div>
@@ -491,6 +494,8 @@
                 </div>
                 <div id="timer">60:00</div>
             </div>
+
+            <p id="closeNoticeExam" class="close-notice" style="display:none;"></p>
 
             <div id="examSheetExam"></div>
 
@@ -750,6 +755,8 @@
 
         function applyConfig(config) {
             headerCfg = config;
+            closesAtMs = parseInt(config.exam_closes_at, 10) || 0;
+            updateCloseNotices();
             examConfig.setMode = (config.set_mode === 'single') ? 'single' : 'triple';
             if (config.exam_duration_minutes) {
                 var mins = parseInt(config.exam_duration_minutes, 10);
@@ -936,6 +943,34 @@
             pendingSet = null;
         }
 
+        // --- SCHEDULED CLOSING TIME NOTICE ---
+        // A scheduled exam is submitted automatically at its closing time, so a student
+        // who starts late has less than the full duration. Say so in red, with the time.
+        var closesAtMs = 0;
+
+        function closeClock(ms) {
+            return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Before the attempt starts (deadlineMs = 0) the notice is general; once it has
+        // started it gives the exact submission time when that cuts the allowed time short.
+        function updateCloseNotices() {
+            var info = document.getElementById('closeNoticeInfo');
+            var exam = document.getElementById('closeNoticeExam');
+            if (!info || !exam) { return; }
+            info.style.display = 'none'; exam.style.display = 'none';
+            if (!closesAtMs) { return; }
+            info.textContent = 'This exam closes at ' + closeClock(closesAtMs) + '. Anything still in progress at that time is ' +
+                'submitted automatically, so if you start late you will have less than the full ' + examConfig.durationMinutes + ' minutes.';
+            info.style.display = 'block';
+            var fullEnd = Date.now() + examConfig.durationMinutes * 60000;
+            if (deadlineMs && deadlineMs < fullEnd - 60000) {
+                exam.textContent = 'Your exam will be submitted automatically at ' + closeClock(deadlineMs) +
+                    ' (scheduled closing time), even though the full ' + examConfig.durationMinutes + ' minutes have not passed.';
+                exam.style.display = 'block';
+            }
+        }
+
         // --- EXAM SHEET (school header format) ---
         var headerCfg = {};
 
@@ -1021,7 +1056,8 @@
             var steps = document.createElement('ol');
             steps.style.cssText = 'margin-left:22px; font-size:14px;';
             ['Write the formula.', 'Substitute the values, with their units.', 'Calculate.',
-             'Write the final answer with its unit. Marks are given for the working, not only the answer.']
+             'Write the final answer with its unit. Marks are given for the working, not only the answer.',
+             'Type all your calculations directly in the answer box on this page, not on external paper.']
                 .forEach(function (t) { steps.appendChild(sheetEl('li', t)); });
             sheet.appendChild(steps);
             var ex = sheetEl('div', 'Example: I = V / R   →   I = 7.4 V / 330 Ω   →   I = 0.022 A (22 mA)');
@@ -1561,6 +1597,7 @@
                 // Express the server's deadline on this computer's clock, so a wrong
                 // local clock cannot give extra time or take it away.
                 deadlineMs = data.deadlineAt - (data.serverNow - Date.now());
+                updateCloseNotices();
 
                 // Keep only the questions this student was served, in the served order,
                 // with the served option order attached (the same shape the old

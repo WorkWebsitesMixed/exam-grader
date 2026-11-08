@@ -187,6 +187,12 @@ export async function updateExam(c) {
     const sql = 'UPDATE exams SET ' + cols.map((k) => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?';
     await env.DB.prepare(sql).bind(...cols.map((k) => f[k]), deps.now(), c.params.id).run();
   }
+  // Setting or moving the closing time also shortens attempts already in progress,
+  // so everyone is stopped at that moment (it never extends a deadline).
+  if (f.closes_at) {
+    await env.DB.prepare("UPDATE attempts SET deadline_at = ? WHERE exam_id = ? AND status = 'started' AND deadline_at > ?")
+      .bind(f.closes_at, c.params.id, f.closes_at).run();
+  }
   if (isDefault === 1) { await makeDefault(env, c.params.id); }
   if (isDefault === 0) { await env.DB.prepare('UPDATE exams SET is_default = 0 WHERE id = ?').bind(c.params.id).run(); }
   return { body: { success: true, exam: examView(await requireExam(env, c.params.id)) } };

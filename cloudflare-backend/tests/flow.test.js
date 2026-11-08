@@ -279,3 +279,41 @@ test('a graded result carries the level of the final grade', async () => {
   const r = (await w.call('GET', '/api/result?attemptId=' + s.json.attemptId)).json;
   assert.equal(r.level, { 4: 'Excelling', 3: 'Exceeding', 2: 'Meeting', 1: 'Approaching' }[Math.floor(Number(r.finalGrade))]);
 });
+
+// ---- the closing time is a hard stop ----
+
+test('a late starter gets only the time left until closes_at, and the sweep submits at that moment', async () => {
+  const w = await ready();                        // 60-minute exam
+  const t0 = w.clock.t;
+  w.env.DB.db.prepare('UPDATE exams SET closes_at = ?').run(t0 + 20 * 60 * 1000);
+  w.clock.t = t0 + 15 * 60 * 1000;                // starts 5 minutes before closing
+  const s = await start(w, await w.google.token({ email: STUDENT }));
+  assert.equal(s.json.deadlineAt, t0 + 20 * 60 * 1000);     // not start + 60 min
+  await w.call('POST', '/api/save', { body: { attemptId: s.json.attemptId, answers: { Q1: 1 } } });
+
+  w.clock.t = t0 + 20 * 60 * 1000 + 2 * 60 * 1000;          // 2 minutes after closing: past the 60 s sweep grace
+  await w.app.scheduled({}, w.env);
+  assert.equal(await w.drainQueue(), 1);
+  assert.equal(w.env.DB.db.prepare('SELECT status FROM attempts').get().status, 'graded');
+});
+
+test('an attempt that starts with plenty of time before closing keeps the full duration', async () => {
+  const w = await ready();
+  w.env.DB.db.prepare('UPDATE exams SET closes_at = ?').run(w.clock.t + 3 * 60 * 60 * 1000);
+  const s = await start(w, await w.google.token({ email: STUDENT }));
+  assert.equal(s.json.deadlineAt, w.clock.t + 60 * 60 * 1000);
+});
+
+test('setting closes_at in the admin panel shortens attempts already in progress, never extends them', async () => {
+  const w = await ready();
+  seedTeacher(w, 'teacher@marymount.edu.co', { role: 'admin' });
+  const login = await w.call('POST', '/api/admin/login', { body: { idToken: await w.google.token({ email: 'teacher@marymount.edu.co' }) } });
+  const auth = { Authorization: 'Bearer ' + login.json.session };
+  const s = await start(w, await w.google.token({ email: STUDENT }));
+  const t0 = w.clock.t;
+  await w.call('PUT', '/api/admin/exams/EX1', { headers: auth, body: { closesAt: t0 + 10 * 60 * 1000 } });
+  assert.equal(w.env.DB.db.prepare('SELECT deadline_at FROM attempts').get().deadline_at, t0 + 10 * 60 * 1000);
+  await w.call('PUT', '/api/admin/exams/EX1', { headers: auth, body: { closesAt: t0 + 5 * 60 * 60 * 1000 } });
+  assert.equal(w.env.DB.db.prepare('SELECT deadline_at FROM attempts').get().deadline_at, t0 + 10 * 60 * 1000);   // not extended
+  assert.ok(s.json.success);
+});

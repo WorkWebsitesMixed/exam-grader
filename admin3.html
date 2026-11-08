@@ -1369,7 +1369,7 @@
           field('Type', f.examType), field('Sets', f.setMode),
           field('Classes (comma separated)', f.classes, 'Example: 11A, 11B, 11C'),
           field('Opens at', f.opensAt, 'Optional. Students can start only inside this window, and only while the exam is switched on (Open exam). Leave both empty for no schedule.'),
-          field('Closes at', f.closesAt, 'Last moment a student can start. Attempts already started keep their full duration.')),
+          field('Closes at', f.closesAt, 'Hard stop: nobody can start after this time, and exams still in progress are submitted automatically at this moment (a late starter gets less than the full duration).')),
         h('h3', { style: 'margin-top:18px' }, 'Exam header'),
         h('div', { class: 'grid2' },
           field('Grade', f.gradeLevel), field('Term', f.term),

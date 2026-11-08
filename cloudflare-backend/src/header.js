@@ -17,6 +17,7 @@ export const DEFAULT_DIRECTIONS =
   'Keep only the exam page open on the computer. No other tabs, windows or programs are allowed ' +
   'during the exam, except resources expressly authorised by the teacher.\n' +
   'Read each question carefully: the marks available are shown next to it.\n' +
+  'Write all your calculations and working directly on this page, not on external paper.\n' +
   'Work on your own. Copying, pasting and sharing answers are not allowed and are recorded.\n' +
   'When the time ends, your answers are submitted automatically.';
 

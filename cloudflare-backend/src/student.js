@@ -217,12 +217,17 @@ export async function startAttempt(c) {
     const paper = buildPaper(exam, qs, deps.random);
     const now = deps.now();
     const id = crypto.randomUUID();
+    // The scheduled closing time is a hard stop: a student who starts late gets
+    // less than the full duration, and the exam is submitted at closes_at. (A
+    // teacher test account may start after closing; it then keeps the full time.)
+    let deadline = now + exam.duration_min * 60 * 1000;
+    if (exam.closes_at != null && exam.closes_at > now) { deadline = Math.min(deadline, exam.closes_at); }
     try {
       await env.DB.prepare(
         'INSERT INTO attempts (id, exam_id, set_id, email, first_name, last_name, class, started_at, deadline_at, paper) ' +
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(id, exam.id, setId, who.email, firstName, lastName, studentClass,
-              now, now + exam.duration_min * 60 * 1000, JSON.stringify(paper)).run();
+              now, deadline, JSON.stringify(paper)).run();
     } catch (e) {
       // Two starts raced: the UNIQUE constraint rejected the second. Resume the winner.
       if (!/UNIQUE/i.test(String(e.message))) { throw e; }
