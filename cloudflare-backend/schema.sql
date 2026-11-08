@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS exams (
   title            TEXT NOT NULL,
   subtitle         TEXT NOT NULL DEFAULT '',
   active           INTEGER NOT NULL DEFAULT 0,       -- 1 = students may start it
+  -- Optional opening window (ms since epoch, NULL = no limit on that side).
+  -- `active` stays the master switch: students can start only when active = 1
+  -- AND now is inside the window. See isExamOpen() in student.js.
+  opens_at         INTEGER,
+  closes_at        INTEGER,
   is_default       INTEGER NOT NULL DEFAULT 0,       -- 1 = served when a link has no &exam=
   duration_min     INTEGER NOT NULL DEFAULT 60,
   exam_type        TEXT NOT NULL DEFAULT 'igcse'

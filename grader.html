@@ -380,8 +380,8 @@
             <h2 id="closedExamTitle" style="color: var(--primary-color);">Exam</h2>
             <p
                 style="color: var(--text-muted); margin-top:14px; font-size:16px; max-width:500px; margin-left:auto; margin-right:auto;">
-                The exam has not been activated by your teacher yet.<br>
-                Please wait and refresh this page when instructed to begin.
+                <span id="closedMessage">The exam has not been activated by your teacher yet.<br>
+                Please wait and refresh this page when instructed to begin.</span>
             </p>
         </div>
     </div>
@@ -715,6 +715,12 @@
 
             if (data.config && data.config.exam_active === 'false') {
                 examClosedAfterLoad = true;
+                // Scheduled exam that has not opened yet: say when (the server decides, this is only text).
+                var opens = parseInt(data.config.exam_opens_at, 10);
+                if (opens > Date.now()) {
+                    document.getElementById('closedMessage').textContent =
+                        'This exam opens on ' + new Date(opens).toLocaleString() + '. Refresh this page then.';
+                }
                 document.getElementById('examClosedScreen').style.display = 'block';
             } else {
                 questionsReady = true;
@@ -877,8 +883,12 @@
                 // Proceed: single-set exams skip set selection + preview and go
                 // straight to the student-info / class screen with Set A.
                 document.getElementById('signInScreen').style.display = 'none';
-                if (examConfig.setMode === 'single') {
-                    selectSet('A');
+                // Also skipped when only one set actually has questions (e.g. a
+                // 'triple' exam with only set B loaded): a lone card would only
+                // let students preview the paper before starting.
+                var filled = ['A', 'B', 'C'].filter(function (l) { return questions[l] && questions[l].length; });
+                if (examConfig.setMode === 'single' || filled.length === 1) {
+                    selectSet(filled[0] || 'A');
                 } else {
                     document.getElementById('setSelectionScreen').classList.add('active');
                 }

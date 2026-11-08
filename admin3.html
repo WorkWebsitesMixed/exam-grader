@@ -166,6 +166,10 @@
     if (override && /^https?:\/\//.test(override)) { API_BASE = override.replace(/\/+$/, ''); }
   }
 
+  // Student pages live on GitHub Pages; links handed to students always use this
+  // address (not location), so they are correct even when the panel runs on localhost.
+  var PAGES_BASE = 'https://workwebsitesmixed.github.io/exam-grader/';
+
   var SESSION_KEY = 'examAdminSession';
 
   // ---------------------------------------------------------------------------
@@ -381,8 +385,14 @@
     bar.appendChild(select);
 
     if (exam) {
-      bar.appendChild(h('span', { class: 'pill ' + (exam.active ? 'open' : 'closed'), id: 'activePill' },
-        exam.active ? 'Open to students' : 'Closed'));
+      // Switched on but outside its window = not actually open; say so.
+      var nowMs = Date.now();
+      var waiting = exam.active && exam.opensAt != null && nowMs < exam.opensAt;
+      var ended = exam.active && exam.closesAt != null && nowMs >= exam.closesAt;
+      var live = exam.active && !waiting && !ended;
+      bar.appendChild(h('span', { class: 'pill ' + (live ? 'open' : 'closed'), id: 'activePill' },
+        live ? 'Open to students' : waiting ? 'Scheduled: opens ' + new Date(exam.opensAt).toLocaleString()
+          : ended ? 'Window ended' : 'Closed'));
       bar.appendChild(h('button', { class: 'btn secondary small', id: 'toggleActive', onclick: toggleActive },
         exam.active ? 'Close exam' : 'Open exam'));
       if (exam.isDefault) { bar.appendChild(h('span', { class: 'pill ok' }, 'Default')); }
@@ -390,8 +400,39 @@
     bar.appendChild(h('button', { class: 'btn small', id: 'newExamBtn', onclick: function () { S.tab = 'newexam'; renderShell(); } },
       'New exam'));
 
+    renderShareRow(exam);
     renderTabs();
     renderView();
+  }
+
+  /**
+   * Links to hand out: the exam page for the selected exam and the results page
+   * (which lists all of a student's exams, so it takes no exam id). The exam id and backend address travel in the query string
+   * (grader.html reads ?src= and &exam=), so several exams can be live at once,
+   * each class getting its own link.
+   */
+  function renderShareRow(exam) {
+    var old = byId('shareRow');
+    if (old) { old.parentNode.removeChild(old); }
+    if (!exam) { return; }
+    var q = '?src=' + API_BASE + '&exam=' + encodeURIComponent(exam.id);
+    var links = [['Exam link', PAGES_BASE + 'grader.html' + q], ['Results link', PAGES_BASE + 'results.html?src=' + API_BASE]];
+    var row = h('div', { class: 'card', id: 'shareRow', style: 'display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center;' });
+    links.forEach(function (l) {
+      var box = h('input', { type: 'text', readonly: 'readonly', value: l[1], style: 'flex:1; min-width:260px;',
+                             'aria-label': l[0], onfocus: function (e) { e.target.select(); } });
+      var btn = h('button', { class: 'btn secondary small', type: 'button' }, 'Copy');
+      btn.onclick = function () {
+        // navigator.clipboard needs a secure context; selecting the text is the fallback.
+        var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(l[1]).then(done, function () { box.select(); }); }
+        else { box.select(); }
+      };
+      row.appendChild(h('div', { style: 'display:flex; gap:8px; align-items:center; flex:1 1 380px;' },
+        h('strong', null, l[0]), box, btn));
+    });
+    var tabBar = byId('tabs');
+    tabBar.parentNode.insertBefore(row, tabBar);
   }
 
   /** Builds the tab bar; S.tab decides which one is highlighted. */
@@ -1223,6 +1264,15 @@
     f.title = h('input', { type: 'text', id: 'sTitle', value: exam.title });
     f.subtitle = h('input', { type: 'text', id: 'sSubtitle', value: exam.subtitle });
     f.duration = h('input', { type: 'number', id: 'sDuration', min: 1, max: 600, value: String(exam.durationMin) });
+    // Opening window: <input type="datetime-local"> works in the browser's own time
+    // zone (Colombia for us); the value is converted to epoch ms for the server.
+    function toLocalInput(ms) {
+      if (ms == null) { return ''; }
+      var d = new Date(ms), p = function (n) { return String(n).padStart(2, '0'); };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+    f.opensAt = h('input', { type: 'datetime-local', id: 'sOpensAt', value: toLocalInput(exam.opensAt) });
+    f.closesAt = h('input', { type: 'datetime-local', id: 'sClosesAt', value: toLocalInput(exam.closesAt) });
     f.examType = h('select', { id: 'sType', onchange: syncType },
       [['igcse', 'IGCSE (fixed order, all questions)'], ['standard', 'Standard (sampling and shuffling allowed)']].map(function (t) {
         return h('option', { value: t[0], selected: exam.examType === t[0] }, t[1]); }));
@@ -1273,6 +1323,8 @@
         body = {
           title: f.title.value, subtitle: f.subtitle.value, durationMin: Number(f.duration.value),
           examType: f.examType.value, setMode: f.setMode.value,
+          opensAt: f.opensAt.value ? new Date(f.opensAt.value).getTime() : null,
+          closesAt: f.closesAt.value ? new Date(f.closesAt.value).getTime() : null,
           classOptions: f.classes.value.split(',').map(function (c) { return c.trim(); }).filter(Boolean),
           questionsPerSet: Number(f.qps.value), oePerSet: Number(f.oe.value), randomize: f.randomize.checked,
           isDefault: f.isDefault.checked, gradeBoundaries: gb, setCards: cards
@@ -1291,7 +1343,9 @@
         h('div', { class: 'grid2' },
           field('Title', f.title), field('Subtitle', f.subtitle), field('Duration (minutes)', f.duration),
           field('Type', f.examType), field('Sets', f.setMode),
-          field('Classes (comma separated)', f.classes, 'Example: 11A, 11B, 11C')),
+          field('Classes (comma separated)', f.classes, 'Example: 11A, 11B, 11C'),
+          field('Opens at', f.opensAt, 'Optional. Students can start only inside this window, and only while the exam is switched on (Open exam). Leave both empty for no schedule.'),
+          field('Closes at', f.closesAt, 'Last moment a student can start. Attempts already started keep their full duration.')),
         h('div', { class: 'grid2', style: 'margin-top:12px' },
           field('Questions per set (0 = all)', f.qps), field('Open-ended guaranteed per set (0 = none)', f.oe),
           h('div', { class: 'field' }, h('label', null, 'Shuffle'),

@@ -56,6 +56,17 @@ function examFields(body) {
   if (body.title !== undefined) { out.title = text(body.title, 200); }
   if (body.subtitle !== undefined) { out.subtitle = text(body.subtitle, 300); }
   if (body.active !== undefined) { out.active = body.active ? 1 : 0; }
+  // Opening window: epoch ms, or null/'' to clear that side. closes_at must be after opens_at.
+  for (const [key, col] of [['opensAt', 'opens_at'], ['closesAt', 'closes_at']]) {
+    if (body[key] === undefined) { continue; }
+    if (body[key] === null || body[key] === '') { out[col] = null; continue; }
+    const t = Number(body[key]);
+    if (!Number.isFinite(t) || t < 0) { throw new HttpError(400, 'bad_request', key); }
+    out[col] = Math.round(t);
+  }
+  if (out.opens_at && out.closes_at && out.closes_at <= out.opens_at) {
+    throw new HttpError(400, 'bad_request', 'closesAt must be after opensAt');
+  }
   if (body.isDefault !== undefined) { out.is_default = body.isDefault ? 1 : 0; }
   if (body.durationMin !== undefined) { out.duration_min = clampInt(body.durationMin, 1, 600); }
   if (body.examType !== undefined) {
@@ -88,7 +99,7 @@ function examFields(body) {
 /** The exam as the admin panel sees it (JSON columns expanded). */
 function examView(e) {
   return {
-    id: e.id, title: e.title, subtitle: e.subtitle, active: !!e.active, isDefault: !!e.is_default,
+    id: e.id, title: e.title, subtitle: e.subtitle, active: !!e.active, opensAt: e.opens_at, closesAt: e.closes_at, isDefault: !!e.is_default,
     durationMin: e.duration_min, examType: e.exam_type, setMode: e.set_mode,
     classOptions: JSON.parse(e.class_options || '[]'), questionsPerSet: e.questions_per_set,
     oePerSet: e.oe_per_set, randomize: !!e.randomize,
@@ -121,10 +132,10 @@ export async function createExam(c) {
   const f = examFields(body);
   const now = deps.now();
   await env.DB.prepare(
-    'INSERT INTO exams (id, title, subtitle, active, is_default, duration_min, exam_type, set_mode, class_options, ' +
+    'INSERT INTO exams (id, title, subtitle, active, opens_at, closes_at, is_default, duration_min, exam_type, set_mode, class_options, ' +
     'questions_per_set, oe_per_set, randomize, grade_boundaries, set_cards, created_at, updated_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, f.title || id, f.subtitle || '', f.active || 0, 0, f.duration_min || 60,
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, f.title || id, f.subtitle || '', f.active || 0, f.opens_at ?? null, f.closes_at ?? null, 0, f.duration_min || 60,
           f.exam_type || 'igcse', f.set_mode || 'single', f.class_options || '[]',
           f.questions_per_set || 0, f.oe_per_set || 0, f.randomize || 0,
           f.grade_boundaries || '{}', f.set_cards || '{}', now, now).run();
