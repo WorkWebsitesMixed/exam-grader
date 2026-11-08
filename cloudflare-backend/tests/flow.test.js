@@ -213,3 +213,37 @@ test('public config carries the exam grade boundaries in the string form grader.
   const r = await w.call('GET', '/api/exam');
   assert.equal(r.json.config.grade_boundaries_A, '4.0:90,1.0:0');
 });
+
+// ---- opening window (opens_at / closes_at) ----
+
+test('a scheduled exam serves no questions and refuses starts before it opens, then opens by itself', async () => {
+  const w = await ready();
+  const opensAt = w.clock.t + 10 * 60 * 1000;
+  w.env.DB.db.prepare('UPDATE exams SET opens_at = ?').run(opensAt);
+  const token = await w.google.token({ email: STUDENT });
+
+  const before = await w.call('GET', '/api/exam');
+  assert.equal(before.json.config.exam_active, 'false');
+  assert.equal(before.json.config.exam_opens_at, String(opensAt));
+  assert.equal(before.json.questions.A.length, 0);              // no preview of the paper
+  assert.equal((await start(w, token)).json.code, 'exam_closed');
+
+  w.clock.t = opensAt;                                           // cache must not hold "closed" past the boundary
+  const after = await w.call('GET', '/api/exam');
+  assert.equal(after.json.config.exam_active, 'true');
+  assert.equal(after.json.questions.A.length, 3);
+  assert.equal((await start(w, token)).json.success, true);
+});
+
+test('starts are refused after closes_at, and the master switch still closes inside the window', async () => {
+  const w = await ready();
+  const t0 = w.clock.t;
+  w.env.DB.db.prepare('UPDATE exams SET opens_at = ?, closes_at = ?').run(t0 - 1000, t0 + 60 * 1000);
+  const token = await w.google.token({ email: STUDENT });
+  w.clock.t = t0 + 60 * 1000;
+  assert.equal((await start(w, token)).json.code, 'exam_closed');
+
+  w.clock.t = t0;
+  w.env.DB.db.prepare('UPDATE exams SET active = 0').run();
+  assert.equal((await start(w, token)).json.code, 'exam_closed');
+});

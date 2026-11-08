@@ -30,6 +30,18 @@ const EXAM_CACHE_MS = 30 * 1000;
 
 const examCache = new Map();  // key -> {expiresAt, payload}
 
+/**
+ * True when students may start the exam right now: the master `active` switch
+ * is on AND the optional window [opens_at, closes_at) contains `now`.
+ * Server clock only; the browser's clock is never consulted.
+ */
+export function isExamOpen(exam, now) {
+  if (!exam.active) { return false; }
+  if (exam.opens_at != null && now < exam.opens_at) { return false; }
+  if (exam.closes_at != null && now >= exam.closes_at) { return false; }
+  return true;
+}
+
 /** Test hook. */
 export function resetStudentCaches() { examCache.clear(); }
 
@@ -54,14 +66,17 @@ async function isRetakeExempt(env, email) {
 }
 
 /** The config keys grader.html already understands (same names as the old Config sheet). */
-function publicConfig(exam) {
+function publicConfig(exam, now) {
   const cfg = {
     exam_id: exam.id,
     exam_title: exam.title,
     exam_subtitle: exam.subtitle,
     class_options: JSON.parse(exam.class_options || '[]').join(','),
     exam_duration_minutes: String(exam.duration_min),
-    exam_active: exam.active ? 'true' : 'false',
+    exam_active: isExamOpen(exam, now) ? 'true' : 'false',
+    // Lets the closed screen say when the exam opens (epoch ms as text, '' = none).
+    exam_opens_at: exam.opens_at != null ? String(exam.opens_at) : '',
+    exam_closes_at: exam.closes_at != null ? String(exam.closes_at) : '',
     exam_type: exam.exam_type,
     set_mode: exam.set_mode,
   };
@@ -132,15 +147,22 @@ export async function getExam(c) {
   const exam = await findExam(c.env, examId);
   if (!exam) { throw new HttpError(404, 'exam_not_found', 'Exam not found'); }
 
-  const payload = { success: true, config: publicConfig(exam), questions: { A: [], B: [], C: [] } };
+  const open = isExamOpen(exam, now);
+  const payload = { success: true, config: publicConfig(exam, now), questions: { A: [], B: [], C: [] } };
   // An inactive exam exposes only its config so the page can say "closed".
-  if (exam.active) {
+  if (open) {
     const { results } = await c.env.DB
       .prepare('SELECT * FROM questions WHERE exam_id = ? ORDER BY set_id, position')
       .bind(exam.id).all();
     for (const q of results) { payload.questions[q.set_id].push(publicQuestion(q)); }
   }
-  examCache.set(key, { expiresAt: now + EXAM_CACHE_MS, payload });
+  // Never cache across a window boundary, or students would see "closed" up to
+  // 30 s after the opening time (or the paper up to 30 s after closing).
+  let ttl = EXAM_CACHE_MS;
+  for (const edge of [exam.opens_at, exam.closes_at]) {
+    if (edge != null && edge > now) { ttl = Math.min(ttl, edge - now); }
+  }
+  examCache.set(key, { expiresAt: now + ttl, payload });
   return { body: payload, cacheSeconds: 30 };
 }
 
@@ -154,7 +176,7 @@ export async function startAttempt(c) {
   const exam = await findExam(env, String(body.exam || ''));
   if (!exam) { throw new HttpError(404, 'exam_not_found', 'Exam not found'); }
   const exempt = await isRetakeExempt(env, who.email);
-  if (!exam.active && !exempt) { throw new HttpError(403, 'exam_closed', 'This exam is not open'); }
+  if (!isExamOpen(exam, deps.now()) && !exempt) { throw new HttpError(403, 'exam_closed', 'This exam is not open'); }
 
   const setId = String(body.set || '');
   const firstName = String(body.firstName || '').trim().slice(0, 80);
