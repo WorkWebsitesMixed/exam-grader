@@ -325,6 +325,19 @@
             color: var(--text-main);
         }
 
+        /* School exam header (format required by the Learning Council) */
+        .exam-sheet { background: white; border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .sheet-top { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; border-bottom: 2px solid var(--primary-color); padding-bottom: 12px; margin-bottom: 12px; }
+        .sheet-top img { height: 64px; width: auto; }
+        .sheet-titles { flex: 1; min-width: 220px; text-align: center; line-height: 1.5; }
+        .sheet-titles .school { font-weight: bold; font-size: 17px; }
+        .sheet-titles .exam { font-weight: bold; font-size: 15px; color: var(--primary-color); }
+        .sheet-line { display: flex; flex-wrap: wrap; gap: 6px 28px; font-size: 14px; margin: 6px 0; }
+        .sheet-line b { font-weight: 600; }
+        .sheet-line .blank { display: inline-block; min-width: 90px; border-bottom: 1px solid var(--text-muted); }
+        .sheet-sub { font-weight: 600; margin: 14px 0 4px; font-size: 14px; }
+        .exam-sheet ul { margin-left: 22px; font-size: 14px; }
+        .question-marks { font-weight: normal; font-size: 13px; color: var(--text-muted); margin-left: 8px; }
         .grading-table {
             width: 100%;
             border-collapse: collapse;
@@ -442,6 +455,8 @@
                 </ul>
             </div>
 
+            <div id="examSheetInfo"></div>
+
             <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:25px;">
                 <div
                     style="flex:1; min-width:300px; background:#F0F7FF; border-left:4px solid var(--primary-color); padding:20px; border-radius:8px;">
@@ -454,12 +469,6 @@
                     </div>
                 </div>
 
-                <div
-                    style="flex:1; min-width:300px; background:#F8FAFC; border:1px solid var(--border-color); padding:20px; border-radius:8px;">
-                    <h3 style="color:var(--text-main); margin-bottom:10px; font-size:16px;">📊 Grading Scale (<span
-                            id="scaleSetName"></span>)</h3>
-                    <table class="grading-table" id="gradingScaleTable"></table>
-                </div>
             </div>
 
             <form id="studentInfoForm">
@@ -498,6 +507,8 @@
                 </div>
                 <div id="timer">60:00</div>
             </div>
+
+            <div id="examSheetExam"></div>
 
             <div id="questionsContainer" class="questions-container"></div>
 
@@ -548,6 +559,7 @@
                         style="background:#F0F7FF; padding:20px; border-radius:8px; text-align:center; border:1px solid var(--primary-color);">
                         <p style="color:var(--text-muted); font-size:14px; text-transform:uppercase;">Final Grade</p>
                         <h2 id="gradeDisplay" style="color:var(--secondary-color); font-size:48px; margin:5px 0;">—</h2>
+                        <p id="levelDisplay" style="color:var(--text-muted); font-size:16px; font-weight:600;"></p>
                         </div>
                 </div>
 
@@ -753,6 +765,7 @@
         }
 
         function applyConfig(config) {
+            headerCfg = config;
             examConfig.setMode = (config.set_mode === 'single') ? 'single' : 'triple';
             if (config.exam_duration_minutes) {
                 var mins = parseInt(config.exam_duration_minutes, 10);
@@ -939,19 +952,120 @@
             pendingSet = null;
         }
 
+        // --- EXAM SHEET (school header format) ---
+        var headerCfg = {};
+
+        // Marks of the paper the student will sit (the set's questions; after the
+        // attempt starts, `questions[selectedSet]` is replaced by the real paper).
+        function sheetTotalMarks() {
+            return (questions[selectedSet] || []).reduce(function (sum, q) { return sum + (q.points || 0); }, 0);
+        }
+
+        // Fewest marks reaching minPct: the server ROUNDS the percentage, so
+        // 89.5% already counts as 90% (same rule as minMarksFor in grading.js).
+        function sheetMinMarks(total, minPct) {
+            if (minPct <= 0 || total <= 0) { return 0; }
+            return Math.min(total, Math.ceil(((minPct - 0.5) * total) / 100));
+        }
+
+        // 1.x Approaching, 2.x Meeting, 3.x Exceeding, 4.0 Excelling.
+        function sheetLevel(grade) {
+            return ['', 'Approaching', 'Meeting', 'Exceeding', 'Excelling'][Math.floor(Number(grade))] || '';
+        }
+
+        function sheetEl(tag, text, cls) {
+            var e = document.createElement(tag);
+            if (text !== undefined) { e.textContent = text; }
+            if (cls) { e.className = cls; }
+            return e;
+        }
+
+        // One "Label: value" item; an empty value becomes a blank line to write on.
+        function sheetField(label, value) {
+            var span = sheetEl('span');
+            span.appendChild(sheetEl('b', label + ': '));
+            if (value) { span.appendChild(document.createTextNode(value)); }
+            else { span.appendChild(sheetEl('span', '', 'blank')); }
+            return span;
+        }
+
+        // Builds the whole sheet into `host`: logo + titles, student line, test line,
+        // directions, learning goal and the grading table for THIS exam's total marks.
+        function buildSheet(host) {
+            host.innerHTML = '';
+            if (!headerCfg.header_school) { return; }   // old backend: no header data
+            var total = sheetTotalMarks();
+            var sheet = sheetEl('div', undefined, 'exam-sheet');
+
+            var top = sheetEl('div', undefined, 'sheet-top');
+            var logo = document.createElement('img');
+            logo.src = 'marymount-logo.png'; logo.alt = 'Marymount School';
+            logo.onerror = function () { logo.style.display = 'none'; };
+            top.appendChild(logo);
+            var titles = sheetEl('div', undefined, 'sheet-titles');
+            titles.appendChild(sheetEl('div', headerCfg.header_school, 'school'));
+            titles.appendChild(sheetEl('div', headerCfg.exam_title || '', 'exam'));
+            [headerCfg.header_grade, headerCfg.header_term, headerCfg.header_teacher].forEach(function (t) {
+                if (t) { titles.appendChild(sheetEl('div', t)); }
+            });
+            top.appendChild(titles);
+            sheet.appendChild(top);
+
+            var who = sheetEl('div', undefined, 'sheet-line');
+            who.appendChild(sheetField("Student's name", (currentFirstName + ' ' + currentLastName).trim()));
+            who.appendChild(sheetField('Group', currentStudentClass || ''));
+            who.appendChild(sheetField('Date', new Date().toLocaleDateString('en-GB')));
+            sheet.appendChild(who);
+
+            var test = sheetEl('div', undefined, 'sheet-line');
+            test.appendChild(sheetField('Duration', examConfig.durationMinutes + ' minutes'));
+            test.appendChild(sheetField('Total marks', total ? String(total) : ''));
+            test.appendChild(sheetField('Grade', ''));   // filled in the results, not on the paper
+            test.appendChild(sheetField('Level', ''));
+            sheet.appendChild(test);
+
+            if (headerCfg.header_directions) {
+                sheet.appendChild(sheetEl('div', 'Directions:', 'sheet-sub'));
+                var ul = document.createElement('ul');
+                headerCfg.header_directions.split('\n').filter(Boolean).forEach(function (line) {
+                    ul.appendChild(sheetEl('li', line));
+                });
+                sheet.appendChild(ul);
+            }
+            if (headerCfg.header_goals) {
+                sheet.appendChild(sheetEl('div', 'Learning goals assessed:', 'sheet-sub'));
+                sheet.appendChild(sheetEl('p', headerCfg.header_goals));
+            }
+
+            // Grading table: marks per range are specific to this exam's total.
+            sheet.appendChild(sheetEl('div', 'Grading scale' + (total ? ' (out of ' + total + ' marks)' : ''), 'sheet-sub'));
+            var table = sheetEl('table', undefined, 'grading-table');
+            var head = table.insertRow();
+            ['Grade', 'Level', 'Minimum %', total ? 'Minimum marks' : ''].forEach(function (t) {
+                if (t) { head.appendChild(sheetEl('th', t)); }
+            });
+            (GRADE_BOUNDARIES[selectedSet] || []).slice().sort(function (a, b) { return b.min - a.min; }).forEach(function (b) {
+                var row = table.insertRow();
+                var c1 = row.insertCell(); c1.style.cssText = 'font-weight:bold; color:var(--primary-color)'; c1.textContent = b.grade;
+                row.insertCell().textContent = sheetLevel(b.grade);
+                row.insertCell().textContent = b.min + '%';
+                if (total) { row.insertCell().textContent = String(sheetMinMarks(total, b.min)); }
+            });
+            sheet.appendChild(table);
+            host.appendChild(sheet);
+        }
+
+        function renderSheets() {
+            buildSheet(document.getElementById('examSheetInfo'));
+            buildSheet(document.getElementById('examSheetExam'));
+        }
+
         // --- INIT EXAM ---
         function selectSet(setLetter) {
             selectedSet = setLetter;
             document.getElementById('setSelectionScreen').classList.remove('active');
 
-            document.getElementById('scaleSetName').textContent = 'Set ' + setLetter;
-            var table = document.getElementById('gradingScaleTable');
-            table.innerHTML = '<tr><th>Grade</th><th>Required %</th></tr>';
-            (GRADE_BOUNDARIES[setLetter] || []).forEach(function (b) {
-                var row = table.insertRow();
-                var c1 = row.insertCell(); c1.style.cssText = 'font-weight:bold; color:var(--primary-color)'; c1.textContent = b.grade;
-                var c2 = row.insertCell(); c2.textContent = b.min + '%';
-            });
+            renderSheets();
             document.getElementById('studentInfoScreen').classList.add('active');
         }
 
@@ -994,6 +1108,7 @@
                 document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
 
                 answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
+                renderSheets();
                 renderQuestions();
                 restoreAnswers();
                 examActive = true;
@@ -1050,7 +1165,9 @@
             var card = document.createElement('div');
             card.className = 'question-card';
             var label = 'Question ';
-            var html = '<div class="question-number">' + label + num + '</div>' +
+            var marks = q.points + (q.points === 1 ? ' mark' : ' marks');
+            var html = '<div class="question-number">' + label + num +
+                '<span class="question-marks">[' + marks + ']</span></div>' +
                 '<div class="question-text">' + escapeHtml(q.text) + '</div>';
 
             if (q.imageUrl && !hideImage) {
@@ -1274,6 +1391,7 @@
                 data.firstName + ' ' + data.lastName + ' — Class ' + currentStudentClass + ' (Set ' + data.set + ')';
             document.getElementById('totalScoreDisplay').textContent = data.totalScore + '/' + data.maxScore;
             document.getElementById('gradeDisplay').textContent = data.finalGrade;
+            document.getElementById('levelDisplay').textContent = data.level || '';
 
             if (data.penalty > 0) {
                 document.getElementById('penaltyDisplay').textContent = '(-' + data.penalty + ' Anti-Cheating Penalty Applied)';
@@ -1480,6 +1598,7 @@
                 document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
 
                 answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
+                renderSheets();
                 renderQuestions();
                 applyServerAnswers(data.answers);   // what the server has (maybe from another computer)
                 restoreAnswers();                   // then anything newer saved in this browser

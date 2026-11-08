@@ -6,21 +6,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateGrade, parseBoundaryString, computeTotals, normalizeShort,
-         parseScoreFeedback, DEFAULT_BOUNDARIES } from '../src/grading.js';
+         parseScoreFeedback, DEFAULT_BOUNDARIES, levelForGrade, minMarksFor } from '../src/grading.js';
 import { buildPaper, publicQuestion } from '../src/paper.js';
 
-test('calculateGrade matches the Code.gs tables', () => {
-  assert.equal(calculateGrade(85, 'A', null), '2.3');
-  assert.equal(calculateGrade(84, 'A', null), '2.0');
-  assert.equal(calculateGrade(0, 'A', null), '1.0');
-  assert.equal(calculateGrade(90, 'C', null), '4.0');
-  assert.equal(calculateGrade(89, 'C', null), '3.7');
-  assert.equal(calculateGrade(35, 'B', null), '1.7');
+test('every set uses the school scale by default', () => {
+  for (const set of ['A', 'B', 'C']) {
+    assert.equal(calculateGrade(90, set, null), '4.0');
+    assert.equal(calculateGrade(89, set, null), '3.7');
+    assert.equal(calculateGrade(82, set, null), '3.7');   // 9/11 = 81.8% -> 82%
+    assert.equal(calculateGrade(30, set, null), '2.0');
+    assert.equal(calculateGrade(0, set, null), '1.0');
+  }
+});
+
+test('levels follow the integer part of the grade', () => {
+  assert.deepEqual(['1.0', '1.7', '2.0', '2.7', '3.0', '3.7', '4.0'].map(levelForGrade),
+    ['Approaching', 'Approaching', 'Meeting', 'Meeting', 'Exceeding', 'Exceeding', 'Excelling']);
+});
+
+test('minMarksFor agrees with the rounded percentage the grader uses', () => {
+  for (const total of [11, 20, 45, 57]) {
+    for (const { min } of DEFAULT_BOUNDARIES.A) {
+      const m = minMarksFor(total, min);
+      assert.ok(Math.round((m / total) * 100) >= min, `${m}/${total} should reach ${min}%`);
+      if (m > 0) { assert.ok(Math.round(((m - 1) / total) * 100) < min, `${m - 1}/${total} should not reach ${min}%`); }
+    }
+  }
+  assert.equal(minMarksFor(20, 90), 18);
+  assert.equal(minMarksFor(11, 90), 10);
 });
 
 test('calculateGrade does not depend on how the list is ordered', () => {
   const shuffled = { A: DEFAULT_BOUNDARIES.A.slice().reverse() };
-  assert.equal(calculateGrade(72, 'A', shuffled), '2.0');
+  assert.equal(calculateGrade(72, 'A', shuffled), '3.3');
 });
 
 test('parseBoundaryString reads the old Config sheet format', () => {

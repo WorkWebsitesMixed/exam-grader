@@ -13,24 +13,36 @@
  * testable without a network.
  */
 
-// Fallback boundaries, copied from GRADE_BOUNDARIES in Code.gs. An exam's own
-// `grade_boundaries` JSON overrides these per set.
-export const DEFAULT_BOUNDARIES = {
-  A: [
-    { grade: '2.3', min: 85 }, { grade: '2.0', min: 70 },
-    { grade: '1.7', min: 50 }, { grade: '1.3', min: 35 }, { grade: '1.0', min: 0 },
-  ],
-  B: [
-    { grade: '3.3', min: 85 }, { grade: '3.0', min: 75 }, { grade: '2.7', min: 65 },
-    { grade: '2.3', min: 55 }, { grade: '2.0', min: 45 }, { grade: '1.7', min: 35 },
-    { grade: '1.3', min: 20 }, { grade: '1.0', min: 0 },
-  ],
-  C: [
-    { grade: '4.0', min: 90 }, { grade: '3.7', min: 80 }, { grade: '3.3', min: 70 },
-    { grade: '3.0', min: 60 }, { grade: '2.7', min: 50 }, { grade: '2.3', min: 40 },
-    { grade: '2.0', min: 30 }, { grade: '1.7', min: 20 }, { grade: '1.3', min: 10 }, { grade: '1.0', min: 0 },
-  ],
-};
+// The school's percentage -> grade table (same one used on the whiteboard).
+// It is the default for EVERY set of every exam; an exam's own `grade_boundaries`
+// JSON still overrides it per set. Before 2026-11 sets A/B/C had different
+// tables copied from the old Code.gs (set A capped at 2.3); that tiering is gone.
+export const SCHOOL_SCALE = [
+  { grade: '4.0', min: 90 }, { grade: '3.7', min: 80 }, { grade: '3.3', min: 70 },
+  { grade: '3.0', min: 60 }, { grade: '2.7', min: 50 }, { grade: '2.3', min: 40 },
+  { grade: '2.0', min: 30 }, { grade: '1.7', min: 20 }, { grade: '1.3', min: 10 },
+  { grade: '1.0', min: 0 },
+];
+export const DEFAULT_BOUNDARIES = { A: SCHOOL_SCALE, B: SCHOOL_SCALE, C: SCHOOL_SCALE };
+
+/**
+ * Performance level for a grade: 1.x Approaching, 2.x Meeting, 3.x Exceeding,
+ * 4.0 Excelling (the integer part of the grade picks the level).
+ */
+export function levelForGrade(grade) {
+  const n = Math.floor(Number(grade));
+  return ['', 'Approaching', 'Meeting', 'Exceeding', 'Excelling'][n] || '';
+}
+
+/**
+ * Fewest marks that reach `minPct` out of `total`. The percentage of an attempt
+ * is ROUNDED to a whole number (computeTotals), so 89.5% already counts as 90%:
+ * the smallest whole mark m with Math.round(m / total * 100) >= minPct.
+ */
+export function minMarksFor(total, minPct) {
+  if (minPct <= 0 || total <= 0) { return 0; }
+  return Math.min(total, Math.ceil(((minPct - 0.5) * total) / 100));
+}
 
 /**
  * Parses the old Config-sheet format "2.3:85,2.0:70,1.0:0" into

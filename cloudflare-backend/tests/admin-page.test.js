@@ -212,6 +212,29 @@ test('settings: saves boundaries and set cards; a malformed boundary is refused 
   page.win.close();
 });
 
+test('settings: the header fields save, directions default is shown, department goal hint appears', async () => {
+  const w = await setup();
+  const page = await signedIn(w);
+  tab(page, 'settings');
+  await until(() => $(page, '#sSave'), 'settings form');
+  assert.match($(page, '#sDirections').value, /Keep only the exam page open/);   // default text prefilled
+  assert.equal($(page, '#sTeacher').value, 'Andrés Forero');
+
+  $(page, '#sGrade').value = '10';
+  $(page, '#sTerm').value = 'II';
+  $(page, '#sTermYear').value = '2026';
+  $(page, '#sTeacher').value = 'Another Teacher';
+  page.requests.length = 0;
+  $(page, '#sSave').click();
+  await until(() => db(w).prepare('SELECT grade_level FROM exams').get().grade_level === '10', 'header saved');
+  const e = db(w).prepare('SELECT * FROM exams').get();
+  assert.equal(e.term, 'II');
+  assert.equal(e.term_year, 2026);
+  assert.equal(e.teacher, 'Another Teacher');
+  await until(() => /Classifies all five material families/.test(text(page, '#goalHint')), 'goal hint after reload');
+  page.win.close();
+});
+
 test('settings: IGCSE switches sampling off, standard switches it on (independent options)', async () => {
   const w = await setup();
   const page = await signedIn(w);

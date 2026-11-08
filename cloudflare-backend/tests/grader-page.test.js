@@ -95,7 +95,14 @@ test('page loads the exam from the Worker, shows images from /img, and applies t
   const page = openPage(w, `?src=${BASE}&exam=EX1`);
   await signIn(w, page);
   assert.equal(page.requests[0].url, `${BASE}/api/exam?exam=EX1`);
-  assert.match(page.doc.getElementById('gradingScaleTable').textContent, /4\.0.*90%/s);
+  // The sheet's table is built for THIS paper: the seeded set totals 10 marks, so 90% (89.5% rounds up) needs 9.
+  const sheet = page.doc.getElementById('examSheetInfo');
+  assert.match(sheet.textContent, /Total marks: 10/);
+  const rows = [...sheet.querySelectorAll('.grading-table tr')].map((r) => r.textContent);
+  assert.ok(rows.includes('4.0Excelling90%9'), rows.join(' | '));
+  assert.ok(rows.includes('1.0Approaching0%0'), rows.join(' | '));
+  assert.match(sheet.textContent, /Marymount School - Medellín/);
+  assert.match(sheet.textContent, /Keep only the exam page open/);
   page.win.close();
 });
 

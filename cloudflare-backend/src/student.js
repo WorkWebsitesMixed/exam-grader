@@ -17,6 +17,8 @@
 import { HttpError, clampInt } from './http.js';
 import { verifyGoogleIdToken } from './auth.js';
 import { buildPaper, publicQuestion } from './paper.js';
+import { examHeader } from './header.js';
+import { DEFAULT_BOUNDARIES, levelForGrade } from './grading.js';
 import { sanitizeEvents, mergeEvents, withLegacySwitches, assessEvents, parseEvents, MAX_FAULTS, FAULT_POINTS } from './integrity.js';
 
 // Seconds of grace after the deadline during which autosave is still accepted
@@ -81,13 +83,21 @@ function publicConfig(exam, now) {
     set_mode: exam.set_mode,
   };
   // Grade boundaries in the old "4.0:90,3.7:80" string form, which grader.html
-  // already parses to show the grading scale before the exam starts.
+  // already parses to show the grading scale before the exam starts. A set
+  // without its own boundaries gets the school scale, the same one the grader uses.
   const bounds = JSON.parse(exam.grade_boundaries || '{}');
   ['A', 'B', 'C'].forEach((s) => {
-    if (Array.isArray(bounds[s]) && bounds[s].length) {
-      cfg['grade_boundaries_' + s] = bounds[s].map((b) => b.grade + ':' + b.min).join(',');
-    }
+    const list = Array.isArray(bounds[s]) && bounds[s].length ? bounds[s] : DEFAULT_BOUNDARIES[s];
+    cfg['grade_boundaries_' + s] = list.map((b) => b.grade + ':' + b.min).join(',');
   });
+  // Header block (school format); the page prints these strings as they are.
+  const h = examHeader(exam, now);
+  cfg.header_school = h.school;
+  cfg.header_grade = h.grade;
+  cfg.header_term = h.term;
+  cfg.header_teacher = h.teacher;
+  cfg.header_directions = h.directions;
+  cfg.header_goals = h.goals;
   const cards = JSON.parse(exam.set_cards || '{}');
   ['A', 'B', 'C'].forEach((s) => {
     const card = cards[s];
@@ -351,6 +361,7 @@ function formatResult(attempt) {
     maxScore: attempt.max_score,
     percentage: attempt.percentage,
     finalGrade: attempt.final_grade,
+    level: levelForGrade(attempt.final_grade),
     penalty: attempt.penalty,
     openFeedback,
     mcFeedback,
@@ -406,7 +417,7 @@ export async function myResults(c) {
       timestamp: new Date(a.started_at).toISOString(), firstName: a.first_name, lastName: a.last_name,
       class: a.class, set: a.set_id, examId: a.exam_id, mcScore: a.mc_score, openScore: a.open_score,
       penalty: a.penalty, totalScore: a.total_score, maxScore: a.max_score, percentage: a.percentage,
-      finalGrade: a.final_grade, details,
+      finalGrade: a.final_grade, level: levelForGrade(a.final_grade), details,
     };
   });
   return { body: { success: true, submissions } };

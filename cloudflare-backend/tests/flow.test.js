@@ -247,3 +247,35 @@ test('starts are refused after closes_at, and the master switch still closes ins
   w.env.DB.db.prepare('UPDATE exams SET active = 0').run();
   assert.equal((await start(w, token)).json.code, 'exam_closed');
 });
+
+// ---- exam header (grade, term, goals) and default scale ----
+
+test('/api/exam carries the header: goal from grade+term, school scale for every set, override wins', async () => {
+  const w = await ready();
+  w.env.DB.db.prepare("UPDATE exams SET grade_level = '11', term = 'I', term_year = 2026").run();
+  const cfg = (await w.call('GET', '/api/exam')).json.config;
+  assert.equal(cfg.header_school, 'Marymount School - Medellín');
+  assert.equal(cfg.header_grade, '11th Grade');
+  assert.equal(cfg.header_term, 'Term I – 2026');
+  assert.equal(cfg.header_teacher, 'Andrés Forero');
+  assert.match(cfg.header_goals, /^Launches the Component 2 coursework project/);
+  assert.match(cfg.header_directions, /Keep only the exam page open/);
+  assert.match(cfg.grade_boundaries_A, /^4\.0:90,3\.7:80/);   // no per-exam table -> school scale
+  assert.equal(cfg.grade_boundaries_C, cfg.grade_boundaries_A);
+
+  w.env.DB.db.prepare("UPDATE exams SET goals_override = 'Custom goal.', teacher = 'Someone Else'").run();
+  w.clock.t += 60 * 1000;   // past the 30 s public cache
+  const cfg2 = (await w.call('GET', '/api/exam')).json.config;
+  assert.equal(cfg2.header_goals, 'Custom goal.');
+  assert.equal(cfg2.header_teacher, 'Someone Else');
+});
+
+test('a graded result carries the level of the final grade', async () => {
+  const w = await ready();
+  const s = await start(w, await w.google.token({ email: STUDENT }));
+  await w.call('POST', '/api/submit', { body: { attemptId: s.json.attemptId, answers: { Q1: 1, Q2: 'paris', Q3: 'rigid' } } });
+  await w.drainQueue();
+  w.clock.t += 61 * 60 * 1000;
+  const r = (await w.call('GET', '/api/result?attemptId=' + s.json.attemptId)).json;
+  assert.equal(r.level, { 4: 'Excelling', 3: 'Exceeding', 2: 'Meeting', 1: 'Approaching' }[Math.floor(Number(r.finalGrade))]);
+});

@@ -21,6 +21,8 @@
 
 import { HttpError, clampInt } from './http.js';
 import { verifyGoogleIdToken, signSession } from './auth.js';
+import { DEFAULT_DIRECTIONS } from './header.js';
+import { goalFor } from './goals.js';
 import { calculateGrade, computeTotals, gradeQuestion } from './grading.js';
 import { boundariesOf } from './queue.js';
 import { assessEvents, parseEvents } from './integrity.js';
@@ -67,6 +69,19 @@ function examFields(body) {
   if (out.opens_at && out.closes_at && out.closes_at <= out.opens_at) {
     throw new HttpError(400, 'bad_request', 'closesAt must be after opensAt');
   }
+  // Header fields. gradeLevel/term are validated lists so a typo cannot silently lose the learning goal.
+  if (body.gradeLevel !== undefined) {
+    if (!['', '10', '11', '12'].includes(String(body.gradeLevel))) { throw new HttpError(400, 'bad_request', 'gradeLevel'); }
+    out.grade_level = String(body.gradeLevel);
+  }
+  if (body.term !== undefined) {
+    if (!['', 'I', 'II', 'III'].includes(String(body.term))) { throw new HttpError(400, 'bad_request', 'term'); }
+    out.term = String(body.term);
+  }
+  if (body.termYear !== undefined) { out.term_year = body.termYear === null || body.termYear === '' ? null : clampInt(body.termYear, 2020, 2100); }
+  if (body.teacher !== undefined) { out.teacher = text(body.teacher, 120); }
+  if (body.directions !== undefined) { out.directions = text(body.directions, 2000); }
+  if (body.goalsOverride !== undefined) { out.goals_override = text(body.goalsOverride, 2000); }
   if (body.isDefault !== undefined) { out.is_default = body.isDefault ? 1 : 0; }
   if (body.durationMin !== undefined) { out.duration_min = clampInt(body.durationMin, 1, 600); }
   if (body.examType !== undefined) {
@@ -103,6 +118,11 @@ function examView(e) {
     durationMin: e.duration_min, examType: e.exam_type, setMode: e.set_mode,
     classOptions: JSON.parse(e.class_options || '[]'), questionsPerSet: e.questions_per_set,
     oePerSet: e.oe_per_set, randomize: !!e.randomize,
+    gradeLevel: e.grade_level, term: e.term, termYear: e.term_year, teacher: e.teacher,
+    // directions: what students will see (the stored text, or the default when empty);
+    // goalsDefault: the department goal for this grade+term, shown as a hint in Settings.
+    directions: e.directions || DEFAULT_DIRECTIONS, goalsOverride: e.goals_override,
+    goalsDefault: goalFor(e.grade_level, e.term),
     gradeBoundaries: JSON.parse(e.grade_boundaries || '{}'), setCards: JSON.parse(e.set_cards || '{}'),
   };
 }
@@ -139,6 +159,12 @@ export async function createExam(c) {
           f.exam_type || 'igcse', f.set_mode || 'single', f.class_options || '[]',
           f.questions_per_set || 0, f.oe_per_set || 0, f.randomize || 0,
           f.grade_boundaries || '{}', f.set_cards || '{}', now, now).run();
+  // Header fields are not in the INSERT above (they have column defaults); set what was supplied.
+  const extra = ['grade_level', 'term', 'term_year', 'teacher', 'directions', 'goals_override'].filter((k) => f[k] !== undefined);
+  if (extra.length) {
+    await env.DB.prepare('UPDATE exams SET ' + extra.map((k) => k + ' = ?').join(', ') + ' WHERE id = ?')
+      .bind(...extra.map((k) => f[k]), id).run();
+  }
   if (f.is_default) { await makeDefault(env, id); }
   return { body: { success: true, exam: examView(await requireExam(env, id)) } };
 }

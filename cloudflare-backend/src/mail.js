@@ -16,6 +16,8 @@
  * HTML.
  */
 
+import { levelForGrade } from './grading.js';
+
 const RELAY_TIMEOUT_MS = 20000;   // Apps Script cold starts take a few seconds
 
 /** Escapes text for use inside HTML element content or a double-quoted attribute. */
@@ -56,7 +58,8 @@ export function buildResultEmail(attempt, examTitle, qids) {
     '<table width="100%" cellpadding="0" cellspacing="0" style="background:#F0F7FF;border:1px solid #BFDBFE;border-top:none;"><tr>' +
       '<td align="center" style="padding:20px;">' +
         '<div style="font-size:48px;font-weight:bold;color:#27AE60;line-height:1;">' + escapeHtml(attempt.final_grade) + '</div>' +
-        '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Final Grade</div></td>' +
+        '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Final Grade &middot; ' +
+          escapeHtml(levelForGrade(attempt.final_grade)) + '</div></td>' +
       '<td align="center" style="padding:20px;border-left:1px solid #BFDBFE;">' +
         '<div style="font-size:36px;font-weight:bold;color:#1F4E78;">' + escapeHtml(attempt.percentage) + '%</div>' +
         '<div style="font-size:11px;color:#64748B;text-transform:uppercase;margin-top:4px;">Score</div></td>' +

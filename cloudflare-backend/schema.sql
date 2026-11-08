@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS exams (
   grade_boundaries  TEXT NOT NULL DEFAULT '{}',
   -- {"A":{"label":"...","max_grade":"2.3","description":"..."},"B":{...},"C":{...}}
   set_cards         TEXT NOT NULL DEFAULT '{}',
+  -- Exam header (school format "Formato de exámenes escritos"). Learning goals
+  -- are looked up from grade_level + term (goals.js) unless goals_override is set.
+  grade_level      TEXT NOT NULL DEFAULT '',          -- '10', '11', '12' or ''
+  term             TEXT NOT NULL DEFAULT '',          -- 'I', 'II', 'III' or ''
+  term_year        INTEGER,                           -- NULL = year the exam is opened
+  teacher          TEXT NOT NULL DEFAULT 'Andrés Forero',
+  directions       TEXT NOT NULL DEFAULT '',          -- '' = the default text in header.js
+  goals_override   TEXT NOT NULL DEFAULT '',
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );

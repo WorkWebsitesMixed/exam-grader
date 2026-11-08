@@ -1271,6 +1271,26 @@
       var d = new Date(ms), p = function (n) { return String(n).padStart(2, '0'); };
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
     }
+    // Exam header (school format). Grade + term pick the department learning goal;
+    // the override box replaces it for this exam only.
+    function opts(list, current) {
+      return list.map(function (t) { return h('option', { value: t[0], selected: String(current || '') === t[0] }, t[1]); });
+    }
+    f.gradeLevel = h('select', { id: 'sGrade', onchange: syncGoal },
+      opts([['', '(not set)'], ['10', '10th'], ['11', '11th'], ['12', '12th']], exam.gradeLevel));
+    f.term = h('select', { id: 'sTerm', onchange: syncGoal },
+      opts([['', '(not set)'], ['I', 'Term I'], ['II', 'Term II'], ['III', 'Term III']], exam.term));
+    f.termYear = h('input', { type: 'number', id: 'sTermYear', min: 2020, max: 2100, placeholder: 'current year',
+                              value: exam.termYear == null ? '' : String(exam.termYear) });
+    f.teacher = h('input', { type: 'text', id: 'sTeacher', value: exam.teacher || '' });
+    f.directions = h('textarea', { id: 'sDirections', rows: 6 }); f.directions.value = exam.directions || '';
+    f.goalsOverride = h('textarea', { id: 'sGoals', rows: 3, placeholder: 'Leave empty to use the department goal for the grade and term' });
+    f.goalsOverride.value = exam.goalsOverride || '';
+    // The department goal is known to the server only; this hint shows the one saved for the stored grade+term.
+    var goalHint = h('div', { class: 'hint', id: 'goalHint' },
+      exam.goalsDefault ? 'Department goal (grade ' + exam.gradeLevel + ', term ' + exam.term + '): ' + exam.goalsDefault
+        : 'No department goal for this grade and term: write one in the box, or leave it empty to print none.');
+    function syncGoal() { goalHint.textContent = 'Save to see the department goal for the new grade and term.'; }
     f.opensAt = h('input', { type: 'datetime-local', id: 'sOpensAt', value: toLocalInput(exam.opensAt) });
     f.closesAt = h('input', { type: 'datetime-local', id: 'sClosesAt', value: toLocalInput(exam.closesAt) });
     f.examType = h('select', { id: 'sType', onchange: syncType },
@@ -1323,6 +1343,9 @@
         body = {
           title: f.title.value, subtitle: f.subtitle.value, durationMin: Number(f.duration.value),
           examType: f.examType.value, setMode: f.setMode.value,
+          gradeLevel: f.gradeLevel.value, term: f.term.value,
+          termYear: f.termYear.value ? Number(f.termYear.value) : null,
+          teacher: f.teacher.value, directions: f.directions.value, goalsOverride: f.goalsOverride.value,
           opensAt: f.opensAt.value ? new Date(f.opensAt.value).getTime() : null,
           closesAt: f.closesAt.value ? new Date(f.closesAt.value).getTime() : null,
           classOptions: f.classes.value.split(',').map(function (c) { return c.trim(); }).filter(Boolean),
@@ -1346,6 +1369,12 @@
           field('Classes (comma separated)', f.classes, 'Example: 11A, 11B, 11C'),
           field('Opens at', f.opensAt, 'Optional. Students can start only inside this window, and only while the exam is switched on (Open exam). Leave both empty for no schedule.'),
           field('Closes at', f.closesAt, 'Last moment a student can start. Attempts already started keep their full duration.')),
+        h('h3', { style: 'margin-top:18px' }, 'Exam header'),
+        h('div', { class: 'grid2' },
+          field('Grade', f.gradeLevel), field('Term', f.term),
+          field('Year', f.termYear, 'Printed as "Term I – 2026".'), field('Teacher', f.teacher)),
+        field('Directions (one line per rule)', f.directions),
+        field('Learning goals override', f.goalsOverride, undefined), goalHint,
         h('div', { class: 'grid2', style: 'margin-top:12px' },
           field('Questions per set (0 = all)', f.qps), field('Open-ended guaranteed per set (0 = none)', f.oe),
           h('div', { class: 'field' }, h('label', null, 'Shuffle'),
