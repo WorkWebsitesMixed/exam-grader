@@ -220,7 +220,9 @@ export function normalizeQuestion(q) {
   if (!text) { throw new HttpError(400, 'bad_question', 'text is required'); }
 
   const row = { set_id: setId, qid, type, points, text, section: String(q.section || '').slice(0, 100),
-                options: null, correct_index: null, rubric: '', accepted_answers: null, image_hash: null };
+                options: null, correct_index: null, rubric: '', accepted_answers: null, image_hash: null,
+                // undefined = "not supplied": an edit that omits it keeps the stored topic.
+                topic: q.topic === undefined ? undefined : String(q.topic).trim().slice(0, 60) };
 
   if (type === 'mc') {
     const options = Array.isArray(q.options) ? q.options.map((o) => String(o).trim()) : [];
@@ -252,7 +254,7 @@ function questionView(r) {
     set: r.set_id, id: r.qid, position: r.position, section: r.section, type: r.type, points: r.points,
     text: r.text, options: r.options ? JSON.parse(r.options) : null, correctIndex: r.correct_index,
     rubric: r.rubric, accepted: r.accepted_answers ? JSON.parse(r.accepted_answers) : null,
-    imageHash: r.image_hash,
+    imageHash: r.image_hash, topic: r.topic || '',
   };
 }
 
@@ -275,9 +277,9 @@ async function insertQuestion(env, examId, r) {
   try {
     await env.DB.prepare(
       'INSERT INTO questions (exam_id, set_id, qid, position, section, type, points, text, options, correct_index, ' +
-      'rubric, accepted_answers, image_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      'rubric, accepted_answers, image_hash, topic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(examId, r.set_id, r.qid, position, r.section, r.type, r.points, r.text, r.options, r.correct_index,
-            r.rubric, r.accepted_answers, r.image_hash).run();
+            r.rubric, r.accepted_answers, r.image_hash, r.topic || '').run();
   } catch (e) {
     if (/UNIQUE/i.test(String(e.message))) { throw new HttpError(409, 'question_exists', 'Question id already exists in that set'); }
     throw e;
@@ -311,9 +313,9 @@ export async function updateQuestion(c) {
                                 position: body.position !== undefined ? body.position : existing.position });
   await env.DB.prepare(
     'UPDATE questions SET position = ?, section = ?, type = ?, points = ?, text = ?, options = ?, ' +
-    'correct_index = ?, rubric = ?, accepted_answers = ?, image_hash = ? WHERE id = ?')
+    'correct_index = ?, rubric = ?, accepted_answers = ?, image_hash = ?, topic = ? WHERE id = ?')
     .bind(r.position, r.section, r.type, r.points, r.text, r.options, r.correct_index, r.rubric,
-          r.accepted_answers, r.image_hash, existing.id).run();
+          r.accepted_answers, r.image_hash, r.topic === undefined ? existing.topic : r.topic, existing.id).run();
   return { body: { success: true } };
 }
 

@@ -18,6 +18,7 @@ import * as admin from './admin.js';
 import { uploadImage, serveImage, listImages } from './images.js';
 import { createJob, runJob, getJob } from './jobs.js';
 import { exportIndex, exportExam } from './export.js';
+import { examResults } from './analysis.js';
 import { handleQueueBatch, runSweep } from './queue.js';
 
 /**
@@ -44,6 +45,7 @@ const ROUTES = [
   { method: 'GET',  path: '/api/admin/exams/:id',         handler: admin.getExamAdmin, admin: true },
   { method: 'PUT',  path: '/api/admin/exams/:id',         handler: admin.updateExam, admin: true, body: true },
   { method: 'GET',  path: '/api/admin/exams/:id/questions',      handler: admin.listQuestions, admin: true },
+  { method: 'GET',  path: '/api/admin/exams/:id/results',        handler: examResults, admin: true },
   { method: 'POST', path: '/api/admin/exams/:id/questions',      handler: admin.addQuestion, admin: true, body: true },
   { method: 'POST', path: '/api/admin/exams/:id/questions/bulk', handler: admin.addQuestionsBulk, admin: true, body: true },
   { method: 'PUT',  path: '/api/admin/exams/:id/questions/:set/:qid', handler: admin.updateQuestion, admin: true, body: true },

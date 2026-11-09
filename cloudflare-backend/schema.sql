@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS questions (
   accepted_answers TEXT,                             -- SECRET. JSON array, short only.
                                                      -- (Code.gs overloaded the Rubric column)
   image_hash       TEXT REFERENCES images(hash),
+  topic            TEXT NOT NULL DEFAULT '',          -- optional tag for the Analysis tab (e.g. 'Electronics')
   UNIQUE (exam_id, set_id, qid)                      -- also serves lookups by exam
 );
 

@@ -321,7 +321,7 @@
   function signOut(message) {
     S.session = ''; S.email = ''; S.role = '';
     storeClear();
-    S.exams = []; S.examId = ''; S.attempts = null; S.questions = null; S.simPoll++;
+    S.exams = []; S.examId = ''; S.attempts = null; S.questions = null; S.analysis = null; S.simPoll++;
     byId('app').classList.add('hidden');
     byId('who').classList.add('hidden');
     byId('signinCard').classList.remove('hidden');
@@ -365,7 +365,7 @@
         var def = S.exams.filter(function (e) { return e.isDefault; })[0] || S.exams[0];
         wanted = def ? def.id : '';
       }
-      if (wanted !== S.examId) { S.attempts = null; S.questions = null; }
+      if (wanted !== S.examId) { S.attempts = null; S.questions = null; S.analysis = null; }
       S.examId = wanted;
       renderShell();
     }).catch(fail);
@@ -377,7 +377,7 @@
     clear(bar);
 
     var select = h('select', { id: 'examSelect', onchange: function () {
-      S.examId = select.value; S.attempts = null; S.questions = null; S.simPoll++;
+      S.examId = select.value; S.attempts = null; S.questions = null; S.analysis = null; S.simPoll++;
       renderShell();
     } }, S.exams.map(function (e) {
       return h('option', { value: e.id, selected: e.id === S.examId }, e.title + ' (' + e.id + ')');
@@ -437,7 +437,7 @@
 
   /** Builds the tab bar; S.tab decides which one is highlighted. */
   function renderTabs() {
-    var tabs = [['attempts', 'Attempts'], ['questions', 'Questions'], ['settings', 'Settings'], ['tools', 'Tools']];
+    var tabs = [['attempts', 'Attempts'], ['questions', 'Questions'], ['analysis', 'Analysis'], ['settings', 'Settings'], ['tools', 'Tools']];
     if (S.role === 'admin') { tabs.push(['teachers', 'Teachers']); }
     var tabBar = byId('tabs');
     clear(tabBar);
@@ -458,6 +458,7 @@
     }
     if (S.tab === 'attempts') { return attemptsView(); }
     if (S.tab === 'questions') { return questionsView(); }
+    if (S.tab === 'analysis') { return analysisView(); }
     if (S.tab === 'settings') { return mount(view, settingsView()); }
     if (S.tab === 'tools') { return mount(view, toolsView()); }
   }
@@ -773,6 +774,268 @@
   // Questions
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Analysis: statistics of one exam, computed here from compact results
+  // ---------------------------------------------------------------------------
+  // The Worker has 10 ms of CPU per request, so it only serves the raw numbers
+  // (GET /api/admin/exams/:id/results, 25 attempts a page, graded attempts of real
+  // students only) and the arithmetic happens in this browser.
+
+  var MIN_FOR_FLAGS = 10;     // below this many attempts a question gets no flag: too little data
+  var GROUP_SHARE = 0.27;     // top and bottom share of students compared for discrimination
+  var FLAG_HARD = 0.30, FLAG_EASY = 0.90, FLAG_WEAK = 0.20;
+
+  function median(list) {
+    if (!list.length) { return 0; }
+    var s = list.slice().sort(function (a, b) { return a - b; });
+    var m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+  function mean(list) { return list.length ? list.reduce(function (a, b) { return a + b; }, 0) / list.length : 0; }
+  function normAnswer(t) { return String(t || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+  /** Facility of a list of {score, max} items: marks earned over marks available. */
+  function facilityOf(items) {
+    var s = 0, m = 0;
+    items.forEach(function (i) { s += i.score; m += i.max; });
+    return m ? s / m : null;
+  }
+
+  /**
+   * @param {Array} questions  admin question rows (id, set, type, points, topic)
+   * @param {Array} attempts   rows from /results (each with items[])
+   */
+  function analyse(questions, attempts) {
+    var N = attempts.length;
+    var meta = {};
+    questions.forEach(function (q) { meta[q.set + ':' + q.id] = q; });
+
+    // Raw percentage (before the integrity penalty) ranks students for discrimination.
+    attempts.forEach(function (a) {
+      var s = 0, m = 0;
+      a.items.forEach(function (i) { s += i.score; m += i.max; });
+      a.rawPct = m ? s / m : 0;
+    });
+    var ranked = attempts.slice().sort(function (x, y) { return y.rawPct - x.rawPct; });
+    var g = Math.max(1, Math.round(GROUP_SHARE * N));
+    var topIds = {}, bottomIds = {};
+    ranked.slice(0, g).forEach(function (a) { topIds[a.id] = true; });
+    ranked.slice(Math.max(0, N - g)).forEach(function (a) { bottomIds[a.id] = true; });
+
+    // Collect every item per question.
+    var byQ = {};
+    attempts.forEach(function (a) {
+      a.items.forEach(function (i) {
+        var key = a.set + ':' + i.qid;
+        (byQ[key] = byQ[key] || []).push({ score: i.score, max: i.max, type: i.type, overridden: i.overridden,
+                                           answer: i.answer, top: !!topIds[a.id], bottom: !!bottomIds[a.id] });
+      });
+    });
+
+    var rows = Object.keys(byQ).map(function (key) {
+      var list = byQ[key], q = meta[key] || {};
+      var fac = facilityOf(list);
+      var facTop = facilityOf(list.filter(function (i) { return i.top; }));
+      var facBottom = facilityOf(list.filter(function (i) { return i.bottom; }));
+      var disc = facTop !== null && facBottom !== null ? facTop - facBottom : null;
+      var max = list[0].max;
+      var type = list[0].type;
+      var overrides = list.filter(function (i) { return i.overridden; }).length;
+
+      var flags = [];
+      if (list.length >= MIN_FOR_FLAGS) {
+        if (fac < FLAG_HARD) { flags.push('Very hard'); }
+        if (fac > FLAG_EASY) { flags.push('Very easy'); }
+        if (disc !== null && disc < 0) { flags.push('Review: negative discrimination'); }
+        else if (disc !== null && disc < FLAG_WEAK) { flags.push('Weak discrimination'); }
+      }
+
+      // Most repeated incorrect answers (short and multiple choice) and the score spread (open-ended).
+      var wrong = {}, dist = {};
+      list.forEach(function (i) {
+        if (i.type === 'openEnded') { dist[i.score] = (dist[i.score] || 0) + 1; return; }
+        if (i.score >= i.max) { return; }
+        var a = normAnswer(i.answer) || '(blank)';
+        wrong[a] = (wrong[a] || 0) + 1;
+      });
+      var wrongList = Object.keys(wrong).map(function (a) { return { answer: a, n: wrong[a] }; })
+        .sort(function (x, y) { return y.n - x.n; }).slice(0, 5);
+
+      return { key: key, id: key.split(':')[1], set: key.split(':')[0], topic: q.topic || '', type: type, max: max,
+               n: list.length, facility: fac, discrimination: disc, overrideRate: overrides / list.length,
+               overrides: overrides, flags: flags, wrong: wrongList, dist: dist,
+               position: q.position === undefined ? 1e9 : q.position };
+    }).sort(function (x, y) { return x.set === y.set ? x.position - y.position : (x.set < y.set ? -1 : 1); });
+
+    // Topics: marks earned over marks available across all their questions.
+    var topics = {};
+    rows.forEach(function (r) {
+      var t = r.topic || '(no topic)';
+      var list = byQ[r.key];
+      var o = topics[t] = topics[t] || { topic: t, questions: 0, score: 0, max: 0 };
+      o.questions++;
+      list.forEach(function (i) { o.score += i.score; o.max += i.max; });
+    });
+    var topicRows = Object.keys(topics).map(function (t) {
+      var o = topics[t]; o.facility = o.max ? o.score / o.max : null; return o;
+    }).sort(function (x, y) { return (x.facility || 0) - (y.facility || 0); });
+
+    // Summary and per-class table use the FINAL percentage (penalty included), like the grade.
+    var pcts = attempts.map(function (a) { return a.percentage; });
+    var grades = {}, levels = {}, classes = {};
+    attempts.forEach(function (a) {
+      grades[a.finalGrade] = (grades[a.finalGrade] || 0) + 1;
+      levels[a.level] = (levels[a.level] || 0) + 1;
+      var c = classes[a.class || '(none)'] = classes[a.class || '(none)'] || [];
+      c.push(a.percentage);
+    });
+    var classRows = Object.keys(classes).sort().map(function (c) {
+      return { cls: c, n: classes[c].length, mean: mean(classes[c]), median: median(classes[c]) };
+    });
+    var gradeRows = Object.keys(grades).sort(function (x, y) { return Number(y) - Number(x); })
+      .map(function (gr) { return { grade: gr, n: grades[gr] }; });
+
+    return { n: N, mean: mean(pcts), median: median(pcts), gradeRows: gradeRows, levels: levels,
+             classRows: classRows, questionRows: rows, topicRows: topicRows, groupSize: g };
+  }
+
+  /** One CSV cell; a leading = + - @ is neutralised so a spreadsheet never runs student text as a formula. */
+  function csvCell(v) {
+    var t = String(v === null || v === undefined ? '' : v);
+    if (/^[=+\-@\t\r]/.test(t)) { t = "'" + t; }
+    return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+
+  /** One row per student and question, with the same numbers the tables use. */
+  function analysisCsv(questions, attempts) {
+    var meta = {};
+    questions.forEach(function (q) { meta[q.set + ':' + q.id] = q; });
+    var lines = [['attempt', 'class', 'email', 'first_name', 'last_name', 'grade', 'level', 'percentage', 'penalty',
+                  'question', 'topic', 'type', 'max', 'score', 'overridden', 'answer'].join(',')];
+    attempts.forEach(function (a) {
+      a.items.forEach(function (i) {
+        var q = meta[a.set + ':' + i.qid] || {};
+        lines.push([a.id, a.class, a.email, a.firstName, a.lastName, a.finalGrade, a.level, a.percentage, a.penalty,
+                    i.qid, q.topic || '', i.type, i.max, i.score, i.overridden ? 'yes' : '', i.answer].map(csvCell).join(','));
+      });
+    });
+    return lines.join('\n');
+  }
+
+  function pct(x) { return x === null || x === undefined ? '-' : Math.round(x * 100) + '%'; }
+
+  /** Fetches the questions and every page of results, then renders. Cached until the exam changes or Reload. */
+  function analysisView() {
+    var view = byId('view');
+    if (S.analysis) { return mount(view, analysisPage()); }
+    mount(view, h('div', { class: 'card muted', id: 'analysisLoading' }, 'Loading results...'));
+    var examId = S.examId;
+    var base = '/api/admin/exams/' + encodeURIComponent(examId);
+    var qPromise = S.questions ? Promise.resolve({ questions: S.questions }) : api('GET', base + '/questions');
+    var all = [];
+    function nextPage(after) {
+      return api('GET', base + '/results' + (after ? '?after=' + encodeURIComponent(after) : '')).then(function (d) {
+        all = all.concat(d.attempts);
+        var el = byId('analysisLoading');
+        if (el) { el.textContent = 'Loading results... ' + all.length + ' attempts'; }
+        return d.nextAfterId ? nextPage(d.nextAfterId) : all;
+      });
+    }
+    qPromise.then(function (qd) {
+      S.questions = qd.questions;
+      return nextPage('');
+    }).then(function (attempts) {
+      if (S.examId !== examId) { return; }       // the teacher switched exam while loading
+      S.analysis = { attempts: attempts, result: analyse(S.questions, attempts) };
+      mount(byId('view'), analysisPage());
+    }).catch(fail);
+  }
+
+  function analysisPage() {
+    var A = S.analysis, R = A.result, exam = currentExam();
+    function table(id, heads, rows) {
+      return h('div', { class: 'table-wrap' }, h('table', { id: id },
+        h('thead', null, h('tr', null, heads.map(function (t) { return h('th', null, t); }))),
+        h('tbody', null, rows)));
+    }
+    if (!R.n) {
+      return h('div', { class: 'card' }, 'No graded attempts yet for this exam (teacher test accounts are not counted).');
+    }
+
+    var levelOrder = ['Approaching', 'Meeting', 'Exceeding', 'Excelling'];
+    var stats = h('div', { class: 'stats' },
+      h('div', { class: 'stat' }, h('div', { class: 'v', id: 'anN' }, R.n), h('div', { class: 'l' }, 'Graded attempts')),
+      h('div', { class: 'stat' }, h('div', { class: 'v', id: 'anMean' }, Math.round(R.mean) + '%'), h('div', { class: 'l' }, 'Mean score')),
+      h('div', { class: 'stat' }, h('div', { class: 'v', id: 'anMedian' }, Math.round(R.median) + '%'), h('div', { class: 'l' }, 'Median score')),
+      levelOrder.map(function (lv) {
+        return h('div', { class: 'stat' }, h('div', { class: 'v' }, R.levels[lv] || 0), h('div', { class: 'l' }, lv));
+      }));
+
+    var maxGrade = Math.max.apply(null, R.gradeRows.map(function (g) { return g.n; }));
+    var gradeBars = R.gradeRows.map(function (g) {
+      return h('div', { style: 'display:flex; align-items:center; gap:8px; margin:3px 0;' },
+        h('span', { style: 'width:36px; font-weight:700;' }, g.grade),
+        h('span', { style: 'display:inline-block; height:14px; background:var(--primary); border-radius:3px; width:' + Math.max(2, Math.round(g.n / maxGrade * 260)) + 'px;' }),
+        h('span', null, String(g.n)));
+    });
+
+    var classTable = table('anClasses', ['Class', 'Students', 'Mean', 'Median'], R.classRows.map(function (c) {
+      return h('tr', null, h('td', null, c.cls), h('td', null, c.n), h('td', null, Math.round(c.mean) + '%'), h('td', null, Math.round(c.median) + '%'));
+    }));
+
+    var qTable = table('anQuestions', ['Set', 'Question', 'Topic', 'Type', 'Marks', 'Attempts', 'Facility', 'Discrimination', 'Overrides', 'Flags'],
+      R.questionRows.map(function (r) {
+        return h('tr', { 'data-qid': r.id },
+          h('td', null, r.set), h('td', null, r.id), h('td', { class: 'small' }, r.topic), h('td', null, r.type), h('td', null, r.max),
+          h('td', null, r.n), h('td', null, pct(r.facility)),
+          h('td', null, r.discrimination === null ? '-' : r.discrimination.toFixed(2)),
+          h('td', null, r.type === 'mc' ? '-' : r.overrides + ' (' + pct(r.overrideRate) + ')'),
+          h('td', null, r.flags.map(function (f) { return h('span', { class: 'pill ' + (/Review|hard/.test(f) ? 'fault' : 'warn'), style: 'margin-right:4px' }, f); })));
+      }));
+
+    var topicTable = table('anTopics', ['Topic', 'Questions', 'Facility'], R.topicRows.map(function (t) {
+      return h('tr', null, h('td', null, t.topic), h('td', null, t.questions), h('td', null, pct(t.facility)));
+    }));
+
+    // Wrong answers and score spread, only for questions that have something to show.
+    var detail = R.questionRows.filter(function (r) { return r.wrong.length || r.type === 'openEnded'; }).map(function (r) {
+      var body;
+      if (r.type === 'openEnded') {
+        var parts = [];
+        for (var s = 0; s <= r.max; s++) { parts.push(s + ' marks: ' + (r.dist[s] || 0)); }
+        body = h('div', { class: 'small' }, 'Score spread: ' + parts.join(' · '));
+      } else {
+        body = h('ul', { class: 'small', style: 'margin-left:18px' }, r.wrong.map(function (w) {
+          return h('li', null, h('b', null, w.n + '×'), ' ' + w.answer); }));
+      }
+      return h('div', { class: 'qcard', 'data-qid': r.id }, h('div', { class: 'qhead' }, h('span', null, r.set + ' ' + r.id), h('span', null, r.topic)), body);
+    });
+
+    function download() {
+      var csv = analysisCsv(S.questions, A.attempts);
+      var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      var a = h('a', { href: url, download: 'analysis_' + exam.id + '.csv' });
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    return h('div', null,
+      h('div', { class: 'toolbar' },
+        h('button', { class: 'btn secondary', id: 'anReload', onclick: function () { S.analysis = null; analysisView(); } }, 'Reload'),
+        h('button', { class: 'btn', id: 'anCsv', onclick: download }, 'Download CSV'),
+        h('span', { class: 'muted' }, 'Graded attempts of students only; scores include your overrides. ' +
+          'Discrimination compares the top and bottom ' + R.groupSize + ' students.')),
+      stats,
+      h('div', { class: 'card' }, h('h3', null, 'Grades'), gradeBars),
+      h('div', { class: 'card' }, h('h3', null, 'By class'), classTable),
+      h('div', { class: 'card' }, h('h3', null, 'Questions'),
+        h('p', { class: 'muted small' }, 'Facility = marks earned / marks available. Flags need at least ' + MIN_FOR_FLAGS + ' attempts: facility under ' +
+          Math.round(FLAG_HARD * 100) + '% (very hard) or over ' + Math.round(FLAG_EASY * 100) + '% (very easy), discrimination under ' +
+          FLAG_WEAK + ' (weak) or negative (review the question, key or rubric).'), qTable),
+      h('div', { class: 'card' }, h('h3', null, 'By topic'), topicTable),
+      h('div', { class: 'card' }, h('h3', null, 'Most repeated wrong answers and score spread'), detail.length ? detail : h('p', { class: 'muted' }, 'Nothing to show.')));
+  }
+
   function questionsView() {
     if (S.questions) { return mount(byId('view'), questionsList()); }
     mount(byId('view'), h('div', { class: 'card muted' }, 'Loading questions...'));
@@ -798,18 +1061,18 @@
         h('button', { class: 'btn secondary', id: 'importPdf', onclick: function () { openImport(); } }, 'Import from PDF'),
         h('span', { class: 'muted' }, rows.length + ' question(s), ' + total + ' points')),
       h('div', { class: 'table-wrap' }, h('table', { id: 'questionsTable' },
-        h('thead', null, h('tr', null, ['Set', 'Id', 'Section', 'Type', 'Pts', 'Question', 'Answer', ''].map(function (t) { return h('th', null, t); }))),
+        h('thead', null, h('tr', null, ['Set', 'Id', 'Section', 'Topic', 'Type', 'Pts', 'Question', 'Answer', ''].map(function (t) { return h('th', null, t); }))),
         h('tbody', null, rows.length ? rows.map(function (q) {
           var ans = q.type === 'mc' ? LETTERS[q.correctIndex] : q.type === 'short' ? (q.accepted || []).join(' | ') : 'rubric';
           return h('tr', { 'data-qid': q.id },
-            h('td', null, q.set), h('td', null, q.id), h('td', { class: 'small' }, q.section), h('td', null, q.type),
+            h('td', null, q.set), h('td', null, q.id), h('td', { class: 'small' }, q.section), h('td', { class: 'small' }, q.topic), h('td', null, q.type),
             h('td', null, q.points),
             h('td', { class: 'pre' }, q.text.length > 140 ? q.text.slice(0, 140) + '...' : q.text,
               q.imageHash ? h('span', { class: 'pill ok', style: 'margin-left:6px' }, 'image') : null),
             h('td', { class: 'small' }, ans),
             h('td', null, h('button', { class: 'btn secondary small edit', onclick: function () {
               mount(byId('view'), questionForm(q)); } }, 'Edit')));
-        }) : h('tr', null, h('td', { colspan: 8, class: 'muted' }, 'No questions.'))))));
+        }) : h('tr', null, h('td', { colspan: 9, class: 'muted' }, 'No questions.'))))));
   }
 
   /** Add (q = null) or edit form. Set and id are fixed once a question exists. */
@@ -824,6 +1087,11 @@
       ['A', 'B', 'C'].map(function (s) { return h('option', { value: s, selected: q ? q.set === s : s === (S.qSet || 'A') }, 'Set ' + s); }));
     f.id = h('input', { type: 'text', id: 'qfId', value: q ? q.id : '', disabled: editing, maxlength: 40 });
     f.section = h('input', { type: 'text', id: 'qfSection', value: q ? q.section : '' });
+    // Free-text topic used by the Analysis tab; suggestions come from the topics already in this exam.
+    var knownTopics = {};
+    (S.questions || []).forEach(function (x) { if (x.topic) { knownTopics[x.topic] = true; } });
+    f.topic = h('input', { type: 'text', id: 'qfTopic', list: 'qfTopics', maxlength: 60, value: q ? q.topic || '' : '' });
+    var topicList = h('datalist', { id: 'qfTopics' }, Object.keys(knownTopics).map(function (t) { return h('option', { value: t }); }));
     f.type = h('select', { id: 'qfType', onchange: showType },
       [['mc', 'Multiple choice'], ['short', 'Short answer'], ['openEnded', 'Open-ended']].map(function (t) {
         return h('option', { value: t[0], selected: q ? q.type === t[0] : t[0] === 'mc' }, t[1]);
@@ -881,7 +1149,7 @@
 
     function save() {
       var type = f.type.value;
-      var body = { set: f.set.value, id: f.id.value.trim(), section: f.section.value, type: type,
+      var body = { set: f.set.value, id: f.id.value.trim(), section: f.section.value, topic: f.topic.value, type: type,
                    points: Number(f.points.value), text: f.text.value };
       // An edit replaces the whole row, so the image must be sent back or it detaches.
       if (f.imageHash) { body.imageHash = f.imageHash; }
@@ -899,7 +1167,7 @@
         ? api('PUT', base + '/' + encodeURIComponent(q.set) + '/' + encodeURIComponent(q.id), body)
         : api('POST', base, body);
       call.then(function () {
-        S.questions = null; banner('Question saved.', 'okmsg'); questionsView();
+        S.questions = null; S.analysis = null; banner('Question saved.', 'okmsg'); questionsView();
       }).catch(fail);
     }
 
@@ -915,7 +1183,7 @@
       h('h3', null, editing ? 'Edit question ' + q.id : 'Add question'),
       h('div', { class: 'grid2' },
         field('Set', f.set), field('Question id', f.id, 'Example: A_6 or Q3b. Cannot change later.'),
-        field('Section', f.section), field('Type', f.type), field('Points', f.points)),
+        field('Section', f.section), field('Topic (for Analysis)', f.topic), topicList, field('Type', f.type), field('Points', f.points)),
       h('div', { style: 'margin-top:12px' }, field('Question text', f.text)),
       imageBox,
       h('div', { style: 'margin-top:12px' }, mcBox, shortBox, openBox),
