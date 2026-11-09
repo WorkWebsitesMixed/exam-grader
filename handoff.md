@@ -1,8 +1,49 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-10-08 (session 11 — decision to migrate the backend to Cloudflare; load and lab-network checks done)_
+_Last updated: 2026-11-09 (session 12 — school exam header, opening window and hard-stop closing, first real exam on the new backend, Analysis tab)_
 
-**→ Start at [§10 Cloudflare migration](#10-cloudflare-migration-start-here--as-of-2026-10-08-session-11).** §9 (the lab incident) is kept for history; §10 records what the checks found.
+**→ Start at [START HERE: state as of 2026-11-09](#start-here-state-as-of-2026-11-09-session-12).** Everything below it is history; §10 holds the Cloudflare migration decisions and a detailed dated Log (newest entries first).
+
+## START HERE: state as of 2026-11-09 (session 12)
+
+### What is live and where
+- **Backend:** Cloudflare Worker `https://examgrader-api.marymount-exams.workers.dev` (D1 `examgrader`, R2 `exam-files`, queue `examgrader-grading`). Andrés deployed it on 2026-11-08 (version `cf2fe3f8`) and again before the 2026-11-09 exam (attempt deadlines showed the hard-stop code live). **Unverified:** whether migrations 004, 005, 006 are applied and whether the Worker built from `abf5017` is the one deployed. Check with `npx wrangler d1 execute examgrader --remote --command "PRAGMA table_info(exams)"` (look for `grade_level`, `subject`) and `PRAGMA table_info(questions)` (look for `topic`).
+- **Frontend:** GitHub Pages from `main` (`abf5017`): `grader.html`, `results.html`, `admin3.html` (the admin panel, new backend), `marymount-logo.png`. Old `admin.html` and the Apps Script path are untouched legacy.
+- **Exams in D1 (checked 2026-11-09):** `M2_mock_T1_reduced` (G10, 65 min, ~58 attempts sat it on 2026-11-09, window 07:30–08:35; its `class_options` was EMPTY so the class dropdown showed nothing: set Classes in Settings); `G11_T1_W1-5` and `G10_M2_T1` are still `active = 1`; `QUIZ_TEST` (5 min, 7 questions, all types, closed) is the smoke-test exam, source `sample_exam_quiz_test.csv` (git-ignored), re-import with `tools/import-sheet.mjs --replace`.
+
+### Pending activation (committed in `main`, NOT yet live unless the check above says otherwise)
+From `cloudflare-backend/`, in this order: `migrations/004_header.sql`, `005_subject.sql`, `006_topic.sql` (each fails harmlessly with "duplicate column name" if already applied), then `tools/seed-topics-M2_mock_T1_reduced.sql`, then `npx wrangler deploy`. Then in admin3: set Classes, Grade, Term (and Year) per exam so the header and learning goal print.
+
+### Built this session (details in the §10 Log, newest first)
+- **Opening window** (`opens_at`/`closes_at`, migration 003): open = `active` master switch AND server time inside the window. **`closes_at` is a hard stop:** `deadline_at = min(start + duration, closes_at)`, the page timer follows it, the sweep submits expired attempts that autosaved, and saving `closesAt` shortens attempts in progress (never extends). Red notices in grader.html (class step and inside the exam).
+- **Single-set skip:** no set cards or preview when the exam is `single` or only one set has questions.
+- **School exam header** (Learning Council format, English): logo, school, title, "Term I – 2026", "Teacher - Subject" (both editable, default Andrés Forero - Design & Technology), Student's name / Group / Grade (10-12 read from the group) / Date, duration, total marks, directions (school sentence + rules, editable), calculation guide, learning goal (looked up from grade + term in `src/goals.js`, copied from the department workbook, 10 and 11 only; 12 empty; overridable), and a grading table with minimum marks for THIS paper. Sheet appears only inside the exam; the class step shows just the anti-cheating rules. Every question shows `[n marks]`; shared figures are repeated on every sub-part.
+- **One default scale for all sets** (4.0 at 90% ... 1.0 at 0%, the whiteboard table); Level = integer part of the grade (Approaching/Meeting/Exceeding/Excelling) shown in the final result, results.html and the email (not in the header). Performance-level DESCRIPTORS deliberately not built (Andrés will confirm later).
+- **Analysis tab** (admin3, one exam at a time): summary, per-class, per-question facility/discrimination/override rate/flags, by topic, repeated wrong answers, score spread, CSV. Stats are computed in the browser from `GET /api/admin/exams/:id/results` (25 attempts/page) because of the 10 ms CPU limit.
+- **Printed exams:** `~/.claude/skills/exam-set/header-template.tex` + updated SKILL.md give the same header, scale table and page numbers in LaTeX.
+- Admin share links (exam link + results link) under the exam bar.
+
+### Operational facts from the 2026-11-09 exam
+- Fixed live: Q11/Q12 figures were missing (uploaded to R2 by hand, `image_hash` set on those two rows); class dropdown empty (Classes field).
+- **Per-student time extension was done by hand in D1:** attempt `0ebe80ea` (María José de los Ríos Paternina, 10A) `deadline_at` moved to 08:49:00. Only that attempt differs from 08:35:00. Her page keeps the old timer until she reloads. **Known gap:** `updateExam` re-applies `closes_at` to every started attempt on EVERY Settings save that includes `closesAt` (admin3 always sends it), which would undo such extensions. Fix idea: apply it only when `closes_at` actually changed. A proper "extra minutes for one student" control in the attempt detail would be the clean version.
+- **AI grading cost and a risk:** Sonnet 5.5 is $2 / $10 per MTok; ~70 students on a 5 open + 18 short exam is estimated at $2–8 (unmeasured). `callMessages` in `src/claude.js` sends no `thinking` or `effort`, so Sonnet 5.5 runs adaptive thinking at high effort; thinking tokens are billed as output and count inside `max_tokens: 1024`, so a long answer could exhaust the budget and return no text, which becomes a non-retryable `error`. Proposed (NOT done): `thinking: {type: "between_tools"}` (the way to turn thinking off on Sonnet 5.5, effort `high` or lower) or a higher `max_tokens`; test with `QUIZ_TEST` then deploy. Andrés' API balance was $14.36 on 2026-11-08.
+- Student message for the exam day was drafted (links, rules, results release, "come and talk to me if you disagree with the automatic feedback"). The results page and email do NOT yet say that last sentence (offered, not built).
+
+### Decisions made (this session)
+Closing time = hard stop; admin panel keeps `active` as master switch; one default scale; header in English only; level out of the header but kept in feedback; Analysis computed in the browser, one exam at a time, topics free-text per question; other teachers with their own admin panel is deferred (needs an exam owner); no performance-level descriptors for now.
+
+### Next steps
+1. Activate the pending items above and verify in a browser: admin3 Settings (Exam header, Classes, Opens/Closes), the share links, the header inside the exam, the Analysis tab on `M2_mock_T1_reduced`.
+2. Fix the Settings-save override of per-student extensions (see above) and decide on a per-student extra-time control.
+3. Decide on the AI grading `thinking`/`max_tokens` change (cost and the no-text risk).
+4. Review Q2 ("This question is about drawing") and Q10 (Table 10.1) of `M2_mock_T1_reduced`: they may need figures, none exist in the folder.
+5. Optional: put the "come and discuss your grade" sentence on the results screen, results.html and the email; serve questions only from `/api/start` (cross-section leak risk, §10 next steps 7).
+6. Close or schedule the other open exams (`G11_T1_W1-5`, `G10_M2_T1` still active); remove `labcheck.html` from `main`.
+7. Later: other teachers with their own panel, comparing exams, performance-level descriptors, `tools/regrade-demo/` (untracked, not described anywhere).
+8. Carry forward: admin password rotation, locking the old v1 spreadsheet, Phase 5.
+
+### Key paths
+`cloudflare-backend/` (`src/` student.js, admin.js, analysis.js, header.js, goals.js, grading.js, mail.js, queue.js; `schema.sql`; `migrations/003`–`006`; `tools/import-sheet.mjs`, `tools/seed-topics-*.sql`; `tests/`, `npm test` = 147 tests), `grader.html`, `results.html`, `admin3.html`, `marymount-logo.png`, `sample_exam_quiz_test.csv`, `~/.claude/skills/exam-set/` (SKILL.md, header-template.tex), exam sources under `~/Documents/Marymount/exams/<grade>/<exam>/`.
 
 ---
 
@@ -480,7 +521,7 @@ Andrés decided to migrate the backend from Apps Script to **Cloudflare Workers 
 3. Test before relying on it: CPU cost of RS256 Google token verification on the free plan; whether D1 `batch()` counts each statement toward the 50 queries/invocation limit (design with ≤ 5 queries per invocation meanwhile); whether the large-PDF tools (extractQuestions, generateRubrics) fit in 10 ms or must run as queue jobs.
 4. ~~Check whether enabling R2 requires a payment method~~ **Confirmed 2026-10-10 (Andrés's screenshot of the activation screen): it does.** Free tier shown: 10 GB-month, 1 M Class A, 10 M Class B; overage $0.015/GB-month, $4.50/M Class A, $0.36/M Class B. Andrés is willing to use a low-balance virtual card; he has not activated it yet (unverified).
 5. Remove the temporary test infrastructure when finished (see Gotchas).
-6. **Opening window + single-set skip (2026-11-08) — to activate:** from `cloudflare-backend/` run `npx wrangler d1 execute examgrader --remote --file=migrations/003_schedule.sql` BEFORE `npx wrangler deploy`; then merge the frontend to `main`. Not yet tried in a real browser.
+6. ~~Opening window + single-set skip~~ **DONE 2026-11-08/09 (migration 003 applied, deployed, merged to main).** Original note: **to activate:** from `cloudflare-backend/` run `npx wrangler d1 execute examgrader --remote --file=migrations/003_schedule.sql` BEFORE `npx wrangler deploy`; then merge the frontend to `main`. Not yet tried in a real browser.
 7. **Optional, low priority — serve questions only from `/api/start`.** Today `GET /api/exam` returns every question to anyone, unauthenticated, while the exam is open (visible in the browser's network tab before sign-in). Inside one session this matters little: once the clock has started, students seeing the paper early gains them almost nothing. It does matter when sections sit the same exam at different times with one link (an early section could pass the paper to a later one), and when a student who has not started yet reads it from a second device. Change would be: `/api/exam` returns config only, the paper comes with the attempt (`/api/start` already returns it for resumes). Needs `grader.html` changes (set-count detection currently reads `questions` from `/api/exam`, so the config would need to expose which sets exist). Decide only if cross-section leaks are a real concern.
 8. Carry forward from §8–§9: admin password rotation, locking the old v1 spreadsheet, browser-verifying Tier 2 admin batches, building a real IGCSE paper, Phase 5.
 

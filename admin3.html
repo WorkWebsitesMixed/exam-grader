@@ -321,7 +321,7 @@
   function signOut(message) {
     S.session = ''; S.email = ''; S.role = '';
     storeClear();
-    S.exams = []; S.examId = ''; S.attempts = null; S.questions = null; S.analysis = null; S.simPoll++;
+    S.exams = []; S.examId = ''; S.attempts = null; S.questions = null; S.analysis = null; S.anClass = ''; S.simPoll++;
     byId('app').classList.add('hidden');
     byId('who').classList.add('hidden');
     byId('signinCard').classList.remove('hidden');
@@ -365,7 +365,7 @@
         var def = S.exams.filter(function (e) { return e.isDefault; })[0] || S.exams[0];
         wanted = def ? def.id : '';
       }
-      if (wanted !== S.examId) { S.attempts = null; S.questions = null; S.analysis = null; }
+      if (wanted !== S.examId) { S.attempts = null; S.questions = null; S.analysis = null; S.anClass = ''; }
       S.examId = wanted;
       renderShell();
     }).catch(fail);
@@ -377,7 +377,7 @@
     clear(bar);
 
     var select = h('select', { id: 'examSelect', onchange: function () {
-      S.examId = select.value; S.attempts = null; S.questions = null; S.analysis = null; S.simPoll++;
+      S.examId = select.value; S.attempts = null; S.questions = null; S.analysis = null; S.anClass = ''; S.simPoll++;
       renderShell();
     } }, S.exams.map(function (e) {
       return h('option', { value: e.id, selected: e.id === S.examId }, e.title + ' (' + e.id + ')');
@@ -946,13 +946,30 @@
       return nextPage('');
     }).then(function (attempts) {
       if (S.examId !== examId) { return; }       // the teacher switched exam while loading
-      S.analysis = { attempts: attempts, result: analyse(S.questions, attempts) };
+      S.analysis = { attempts: attempts };
       mount(byId('view'), analysisPage());
     }).catch(fail);
   }
 
+  /** Class label used for filtering; students without a class group under '(none)'. */
+  function classOf(a) { return a.class || '(none)'; }
+
   function analysisPage() {
-    var A = S.analysis, R = A.result, exam = currentExam();
+    var A = S.analysis, exam = currentExam();
+    // Class filter: '' = every class (the default). Everything below is recomputed on the filtered
+    // attempts, so facility, discrimination, topics, wrong answers and the CSV all describe that class.
+    var classNames = [];
+    A.attempts.forEach(function (a) { if (classNames.indexOf(classOf(a)) < 0) { classNames.push(classOf(a)); } });
+    classNames.sort();
+    if (S.anClass && classNames.indexOf(S.anClass) < 0) { S.anClass = ''; }
+    var shown = S.anClass ? A.attempts.filter(function (a) { return classOf(a) === S.anClass; }) : A.attempts;
+    var R = analyse(S.questions, shown);
+    var classSelect = h('select', { id: 'anClassFilter', onchange: function (e) { S.anClass = e.target.value; mount(byId('view'), analysisPage()); } },
+      h('option', { value: '' }, 'All classes (' + A.attempts.length + ')'),
+      classNames.map(function (c) {
+        var n = A.attempts.filter(function (a) { return classOf(a) === c; }).length;
+        return h('option', { value: c, selected: c === S.anClass }, c + ' (' + n + ')');
+      }));
     function table(id, heads, rows) {
       return h('div', { class: 'table-wrap' }, h('table', { id: id },
         h('thead', null, h('tr', null, heads.map(function (t) { return h('th', null, t); }))),
@@ -1012,15 +1029,15 @@
     });
 
     function download() {
-      var csv = analysisCsv(S.questions, A.attempts);
+      var csv = analysisCsv(S.questions, shown);
       var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-      var a = h('a', { href: url, download: 'analysis_' + exam.id + '.csv' });
+      var a = h('a', { href: url, download: 'analysis_' + exam.id + (S.anClass ? '_' + S.anClass : '') + '.csv' });
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
 
     return h('div', null,
-      h('div', { class: 'toolbar' },
+      h('div', { class: 'toolbar' }, classSelect,
         h('button', { class: 'btn secondary', id: 'anReload', onclick: function () { S.analysis = null; analysisView(); } }, 'Reload'),
         h('button', { class: 'btn', id: 'anCsv', onclick: download }, 'Download CSV'),
         h('span', { class: 'muted' }, 'Graded attempts of students only; scores include your overrides. ' +

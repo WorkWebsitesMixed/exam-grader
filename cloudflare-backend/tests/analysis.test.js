@@ -175,3 +175,40 @@ test('CSV neutralises formulas in student answers', async () => {
   assert.equal(csv.split('\n').length, 1 + 12 * 3);
   page.win.close();
 });
+
+test('Analysis tab: the class filter defaults to all classes and recomputes every table, the CSV included', async () => {
+  const w = await world();
+  const page = await signedIn(w);
+  $(page, '.tab[data-tab="analysis"]').click();
+  await until(() => $(page, '#anClassFilter'), 'filter');
+  const sel = $(page, '#anClassFilter');
+  assert.equal(sel.value, '');                                              // default: every class
+  assert.equal($(page, '#anN').textContent, '12');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ['All classes (12)', '10A (6)', '10B (6)']);
+
+  sel.value = '10A';
+  sel.dispatchEvent(new page.win.Event('change'));
+  await until(() => $(page, '#anN').textContent === '6', 'filtered to 10A');
+  const cells = (qid) => [...[...$(page, '#anQuestions').querySelectorAll('tbody tr')].find((r) => r.dataset.qid === qid).children].map((c) => c.textContent);
+  // 10A = students 0,2,4,6,8,10: Q1 right for 0 and 2 -> 4/12 = 33%; Q3 = 6+4+4+2+0+6 = 22/36 = 61%.
+  assert.equal(cells('Q1')[5], '6');
+  assert.equal(cells('Q1')[6], '33%');
+  assert.equal(cells('Q3')[6], '61%');
+  assert.doesNotMatch(cells('Q2')[9], /Very easy/);                         // 6 attempts: below the minimum for flags
+  const classes = [...$(page, '#anClasses').querySelectorAll('tbody tr')].map((r) => r.textContent);
+  assert.equal(classes.length, 1);
+
+  // The filter survives a re-render and goes into the CSV.
+  let csv = '';
+  page.win.URL.createObjectURL = (blob) => { blob.text().then((t) => { csv = t; }); return 'blob:x'; };
+  page.win.URL.revokeObjectURL = () => {};
+  $(page, '#anCsv').click();
+  await until(() => csv, 'csv');
+  assert.equal(csv.split('\n').length, 1 + 6 * 3);
+  assert.ok(!/,10B,/.test(csv));
+
+  sel.value = '';
+  sel.dispatchEvent(new page.win.Event('change'));
+  await until(() => $(page, '#anN').textContent === '12', 'back to all classes');
+  page.win.close();
+});
