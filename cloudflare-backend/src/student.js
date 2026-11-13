@@ -25,10 +25,16 @@ import { sanitizeEvents, mergeEvents, withLegacySwitches, assessEvents, parseEve
 // (clock drift, a slow network at the last second).
 const SAVE_GRACE_MS = 60 * 1000;
 // A final submit this late after the deadline still replaces the saved answers.
-const SUBMIT_GRACE_MS = 120 * 1000;
+// Exported because the sweep (queue.js) must wait longer than this before it
+// auto-submits an expired attempt, or it could close one whose final answers
+// are still arriving.
+export const SUBMIT_GRACE_MS = 120 * 1000;
 // Public exam payload is cached per isolate for this long (admin edits to an
 // ACTIVE exam can take up to this long to reach students, same as the old 30 s cache).
 const EXAM_CACHE_MS = 30 * 1000;
+
+// How many past attempts /api/myresults returns (newest first).
+const MYRESULTS_LIMIT = 20;
 
 const examCache = new Map();  // key -> {expiresAt, payload}
 
@@ -152,7 +158,10 @@ export async function getExam(c) {
   const key = examId || '__default__';
   const now = c.deps.now();
   const cached = examCache.get(key);
-  if (cached && cached.expiresAt > now) { return { body: cached.payload, cacheSeconds: 30 }; }
+  // The browser may cache for as long as the server copy stays valid, never longer:
+  // a page loaded 5 s before the opening time must not keep showing "closed"
+  // for another 25 s. cacheSeconds 0 means "do not cache" (router sends no-store).
+  if (cached && cached.expiresAt > now) { return { body: cached.payload, cacheSeconds: Math.floor((cached.expiresAt - now) / 1000) }; }
 
   const exam = await findExam(c.env, examId);
   if (!exam) { throw new HttpError(404, 'exam_not_found', 'Exam not found'); }
@@ -173,7 +182,7 @@ export async function getExam(c) {
     if (edge != null && edge > now) { ttl = Math.min(ttl, edge - now); }
   }
   examCache.set(key, { expiresAt: now + ttl, payload });
-  return { body: payload, cacheSeconds: 30 };
+  return { body: payload, cacheSeconds: Math.floor(ttl / 1000) };
 }
 
 // ---------- POST /api/start ----------
@@ -194,6 +203,13 @@ export async function startAttempt(c) {
   const studentClass = String(body.class || '').trim().slice(0, 20);
   if (!['A', 'B', 'C'].includes(setId)) { throw new HttpError(400, 'invalid_set', 'Invalid set'); }
   if (!firstName || !lastName) { throw new HttpError(400, 'name_required', 'First and last name are required'); }
+  // The class must be one the teacher listed for this exam (when a list exists),
+  // otherwise per-class statistics fill with typos and wrong groups. Teacher
+  // test accounts are not held to it.
+  const classOptions = JSON.parse(exam.class_options || '[]');
+  if (classOptions.length && !exempt && !classOptions.includes(studentClass)) {
+    throw new HttpError(400, 'invalid_class', 'Choose your class from the list');
+  }
 
   // 2. Existing attempt: resume it, or refuse a repeat.
   let attempt = await env.DB
@@ -247,6 +263,8 @@ export async function startAttempt(c) {
     serverNow: deps.now(),
     paper: JSON.parse(attempt.paper),
     answers: JSON.parse(attempt.answers || '{}'),
+    // When the server last stored the answers: the page applies its own browser copy only if newer.
+    answersSavedAt: attempt.answers_saved_at,
     tabSwitches: attempt.tab_switches,
     // Where the integrity log stands, so a resumed page continues the same
     // strikes (and the same first-warning flags) instead of starting over.
@@ -291,8 +309,10 @@ export async function saveAnswers(c) {
     try { await env.GRADE_QUEUE.send({ type: 'grade', attemptId: attempt.id }); }
     catch (e) { console.error('enqueue failed, the sweep will retry', e && e.message); }
   }
+  // deadlineAt lets the page pick up a per-student extension (or a shortened
+  // closing time) at its next autosave, without a reload.
   return { body: { success: true, savedAt: now, autoSubmitted: forced, faults: verdict.faults,
-                   warnings: verdict.warnings, penalty: verdict.penalty } };
+                   warnings: verdict.warnings, penalty: verdict.penalty, deadlineAt: attempt.deadline_at } };
 }
 
 // ---------- POST /api/submit ----------
@@ -398,8 +418,12 @@ export async function myResults(c) {
   const { env, deps, body } = c;
   const who = await verifyGoogleIdToken(body.idToken, env, deps);
   const { results: rows } = await env.DB
-    .prepare("SELECT * FROM attempts WHERE email = ? AND status = 'graded' AND deadline_at <= ? ORDER BY started_at DESC")
-    .bind(who.email, deps.now()).all();
+    // Latest 20 only, and only the columns used below: every row is parsed
+    // (results, paper) inside a 10 ms CPU budget, so cost must not grow with each exam sat.
+    .prepare('SELECT first_name, last_name, class, set_id, exam_id, started_at, mc_score, open_score, penalty, ' +
+             'total_score, max_score, percentage, final_grade, results, overrides, paper FROM attempts ' +
+             "WHERE email = ? AND status = 'graded' AND deadline_at <= ? ORDER BY started_at DESC LIMIT ?")
+    .bind(who.email, deps.now(), MYRESULTS_LIMIT).all();
 
   const submissions = rows.map((a) => {
     const stored = JSON.parse(a.results || '{}');

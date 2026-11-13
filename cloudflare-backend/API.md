@@ -24,10 +24,10 @@ Free-plan numbers this relies on (official pages, fetched 2026-10-08): Workers 1
 |---|---|
 | `GET /api/exam?exam=<id>` | Public paper: config, set cards, and the full question bank **without** `correct_index`, `rubric`, `accepted_answers`. No `exam` → the exam with `is_default = 1`. Cacheable (`Cache-Control: public, max-age=30`). If the exam is inactive: `{config:{exam_active:'false'}}`. |
 | `POST /api/start` | Body `{idToken, exam, set, firstName, lastName, class}`. Verifies the Google token (§6), then **creates or resumes** the attempt. Returns `{attemptId, startedAt, deadlineAt, serverNow, paper:{qids, optionOrder}, answers}`; or `{duplicate:true}` if that attempt is already `submitted` or later. |
-| `POST /api/save` | Autosave. Body `{attemptId, answers, tabSwitches}`. Sent by the browser every 30 s **only when answers changed**. Rejected after `deadline_at` + 60 s grace, or once submitted. Returns `{success:true, savedAt}`. |
+| `POST /api/save` | Autosave. Body `{attemptId, answers, tabSwitches}`. Sent by the browser every 30 s **only when answers changed**. Rejected after `deadline_at` + 60 s grace, or once submitted. Returns `{success:true, savedAt}`. **P2:** the page also sends one every 60 s when nothing changed (a heartbeat), because the reply carries `deadlineAt`, which is how a teacher's extra time reaches the student. |
 | `POST /api/submit` | Body `{attemptId, answers, tabSwitches}`. Idempotent. Sets `status='submitted'`, enqueues one grading message, returns `{status:'queued', deadlineAt}`. |
 | `GET /api/result?attemptId=` | `{status}` while not graded. The graded result is returned **only when `status='graded'` and `now ≥ deadline_at`** (the "hold results until the timer ends" rule moves from the browser to the server). |
-| `POST /api/myresults` | Body `{idToken}`. All **graded and past-deadline** attempts of that verified email, with per-question detail and the correct MC answers (for `results.html`). |
+| `POST /api/myresults` | Body `{idToken}`. All **graded and past-deadline** attempts of that verified email, with per-question detail and the correct MC answers (for `results.html`). **P2:** only the latest 20. |
 | `GET /img/<hash>` | Streams the image from R2 with `Cache-Control: public, max-age=31536000, immutable`. |
 
 `/start` modes: in `igcse` mode the paper is every question of the set in fixed order and fixed option order (identical for everyone; `paper` is still stored). In `standard` mode, sampling (`questions_per_set`, `oe_per_set`, `randomize` — independent options) and MC option shuffling are done here and stored in `attempts.paper`.
@@ -47,6 +47,7 @@ Free-plan numbers this relies on (official pages, fetched 2026-10-08): Workers 1
 | `DELETE /api/admin/attempts/:id`, `POST /api/admin/attempts/:id/reset` | `deleteSubmission` (+ new: reset a stuck attempt so the student can start again) |
 | `POST /api/admin/exams/:id/recalculate`, `POST .../regrade-mc`, `POST .../resend-emails` | `recalculate`, `regrademc`, `resendEmails` — always scoped to one exam |
 | `POST /api/admin/attempts/:id/regrade`, `POST /api/admin/exams/:id/regrade-errors` | New (no Code.gs equivalent). Grade again with the model: one attempt that is `graded` or `error`, or every `error` attempt of an exam (20 per call, repeat while `more` is true). Overrides and penalty are kept. |
+| `PUT /api/admin/attempts/:id/deadline` | New (P2). Body `{extraMinutes}` (1-180). Adds the minutes to the current deadline (counted from now if it already passed) and sets `deadline_manual = 1`, so a later change of the exam's closing time leaves the attempt alone. Only for an attempt still `started` (409 otherwise). |
 | `GET /api/admin/exams/:id/distractors` | `mcDistractors` |
 | `GET/POST/DELETE /api/admin/teachers` (role admin) | new |
 | `GET /api/admin/exams/:id/export` (JSON; also accepts `EXPORT_KEY`) | new: feeds the Sheets archive and the Raspberry Pi backup |
@@ -147,3 +148,13 @@ Roughly 9 such sessions per day before the D1 write cap. When a daily cap is exc
 - Whether D1 enforces the foreign keys declared in `schema.sql`.
 - Behaviour when the daily D1 write cap is hit (documented: queries stop and return an error).
 - The Sign-In button works unchanged from `github.io` with the Worker as backend (authorized JavaScript origins depend on the page origin, not the backend; untested).
+
+## P2 behaviour notes (audit phase P2)
+
+- `POST /api/start` answers 400 `invalid_class` when the exam has a class list and the class is not in it (teacher test accounts are exempt). The response also carries `answersSavedAt`, which the page compares with its browser copy of the answers.
+- The sweep submits an expired attempt only after `deadline + 150 s` (the 120 s final-submit grace plus 30 s), so it cannot pre-empt a final submit that is still arriving. Attempts that never autosaved are still left alone; the attempts list returns `savedAt` and `deadlineManual` so the panel can label them "Expired, nothing saved".
+- Saving Exam Settings only shortens attempts in progress when `closesAt` actually changed, and never touches attempts with `deadline_manual = 1`.
+- `GET /api/exam` sends `Cache-Control: max-age` equal to the seconds left on the server copy (at most 30), and `no-store` in the last second before an opening or closing time.
+- Recalculate and Regrade MC cost 4 queries per call (exam, questions, attempts, one batch), whatever the chunk size (40).
+- `POST /api/admin/teachers` answers 409 `last_admin` when the change would leave no admin. `POST /api/admin/jobs/:id/run` claims the job atomically: a second press answers 409.
+

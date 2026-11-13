@@ -23,9 +23,15 @@ import { assessEvents, parseEvents, withLegacySwitches } from './integrity.js';
 import { buildSimilarityReport } from './similarity.js';
 import { sendAttemptEmail } from './mail.js';
 import { processJob } from './jobs.js';
+import { SUBMIT_GRACE_MS } from './student.js';
 
 const SWEEP_LIMIT = 10;                 // rows per category per run (query budget)
-const SUBMIT_GRACE_MS = 60 * 1000;      // after the deadline before auto-submitting
+// The sweep submits an expired attempt only AFTER the window in which the
+// student's own final submit is still accepted (SUBMIT_GRACE_MS, student.js)
+// plus a margin. With a shorter wait the sweep could close an attempt whose
+// last answers were still on their way, and /api/submit would then report
+// success without storing them.
+const SWEEP_GRACE_MS = SUBMIT_GRACE_MS + 30 * 1000;
 // A grading run is "stale" only after longer than a queue consumer may run
 // (15 min wall time), so a run that is still alive is never taken over.
 const STUCK_GRADING_MS = 16 * 60 * 1000;
@@ -42,7 +48,10 @@ export const MAX_GRADE_ATTEMPTS = 5;
 // limited to 50 subrequests (model calls + queries).
 const CHECKPOINT_EVERY = 5;
 const STUCK_JOB_MS = 20 * 60 * 1000;
-const EMAIL_PER_SWEEP = 8;             // results emails sent per run (sent in parallel)
+// Results emails sent per run (in parallel). Each one costs about 5 subrequests
+// (2 selects, the relay call and its redirect, 1 update); with the other stages
+// a full sweep then stays near 32 of the 50 allowed per invocation.
+const EMAIL_PER_SWEEP = 5;
 
 /** Parses an exam's boundaries JSON, falling back per set to the defaults. */
 export function boundariesOf(exam) {
@@ -199,6 +208,7 @@ export async function handleQueueBatch(batch, env, deps) {
 /**
  * Cron entry point. Three rescues, each bounded by SWEEP_LIMIT, plus the email stage:
  *  (a) a student's time ran out without a submit -> submit the autosaved answers
+      (only after SWEEP_GRACE_MS, so a final submit still on its way is not pre-empted)
  *  (b) grading started but never finished (worker killed) -> enqueue again
  *  (c) submitted but the enqueue was lost -> enqueue again
  * An expired attempt with NO saved answers is deliberately left alone: the
@@ -214,32 +224,43 @@ export async function runSweep(env, deps) {
   const now = deps.now();
   const enqueued = { expired: 0, stuckGrading: 0, stuckSubmitted: 0, emailed: 0 };
 
+  // Subrequest budget (50 per invocation on the free plan): the three selects,
+  // ONE update for every expired attempt and ONE queue call for every message,
+  // instead of a query and a send per row. Rows per category are capped by SWEEP_LIMIT.
   const expired = await env.DB.prepare(
     "SELECT id FROM attempts WHERE status = 'started' AND answers_saved_at IS NOT NULL AND deadline_at < ? LIMIT ?")
-    .bind(now - SUBMIT_GRACE_MS, SWEEP_LIMIT).all();
-  for (const row of expired.results) {
-    await env.DB.prepare("UPDATE attempts SET status = 'submitted', submitted_at = ? WHERE id = ? AND status = 'started'")
-      .bind(now, row.id).run();
-    await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });
-    enqueued.expired++;
-  }
-
+    .bind(now - SWEEP_GRACE_MS, SWEEP_LIMIT).all();
   const grading = await env.DB.prepare(
     // Measured from when grading STARTED (not from the submit), so an attempt
     // that waited long in the queue is not mistaken for a dead run.
     "SELECT id FROM attempts WHERE status = 'grading' AND (grading_started_at IS NULL OR grading_started_at < ?) LIMIT ?")
     .bind(now - STUCK_GRADING_MS, SWEEP_LIMIT).all();
-  for (const row of grading.results) {
-    await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });
-    enqueued.stuckGrading++;
-  }
-
   const submitted = await env.DB.prepare(
     "SELECT id FROM attempts WHERE status = 'submitted' AND submitted_at < ? LIMIT ?")
     .bind(now - STUCK_SUBMITTED_MS, SWEEP_LIMIT).all();
-  for (const row of submitted.results) {
-    await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });
-    enqueued.stuckSubmitted++;
+
+  const expiredIds = expired.results.map((r) => r.id);
+  if (expiredIds.length) {
+    await env.DB.prepare("UPDATE attempts SET status = 'submitted', submitted_at = ? WHERE status = 'started' AND id IN (" +
+                         expiredIds.map(() => '?').join(',') + ')').bind(now, ...expiredIds).run();
+  }
+  enqueued.expired = expiredIds.length;
+  enqueued.stuckGrading = grading.results.length;
+  enqueued.stuckSubmitted = submitted.results.length;
+
+  const ids = [...new Set([...expiredIds, ...grading.results.map((r) => r.id), ...submitted.results.map((r) => r.id)])];
+  if (ids.length) {
+    try {
+      await env.GRADE_QUEUE.sendBatch(ids.map((id) => ({ body: { type: 'grade', attemptId: id } })));
+    } catch (e) {
+      console.error('sweep could not enqueue, will retry next minute', e && e.message);
+      // Put the rows this run just submitted back to `started` so the next sweep
+      // picks them up in a minute, not after STUCK_SUBMITTED_MS.
+      if (expiredIds.length) {
+        await env.DB.prepare("UPDATE attempts SET status = 'started', submitted_at = NULL WHERE status = 'submitted' AND grade_attempts = 0 AND id IN (" +
+                             expiredIds.map(() => '?').join(',') + ')').bind(...expiredIds).run();
+      }
+    }
   }
 
   // A PDF job whose retries ran out stays 'running'; say so instead of leaving the admin page waiting.

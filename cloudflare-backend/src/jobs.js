@@ -169,15 +169,28 @@ export async function createJob(c) {
 
 /** POST /api/admin/jobs/:id/run -- JSON {items?}; hands the job to the queue. */
 export async function runJob(c) {
-  const { env, params, body } = c;
+  const { env, deps, params, body } = c;
   const job = await env.DB.prepare('SELECT * FROM jobs WHERE id = ?').bind(params.id).first();
   if (!job) { throw new HttpError(404, 'job_not_found', 'Job not found'); }
   if (job.status !== 'queued') { throw new HttpError(409, 'job_started', 'This job was already started'); }
-  if (job.kind === 'generateRubrics') {
-    const items = cleanItems(body.items);
-    await env.FILES.put(itemsKey(job.id), JSON.stringify(items), { httpMetadata: { contentType: 'application/json' } });
+  // Claim the job with one compare-and-set UPDATE before doing anything else.
+  // The queue consumer only flips `queued` to `running` once it starts, so two
+  // quick clicks on "Run" used to send two messages (two paid model calls for
+  // one PDF); now only the request whose UPDATE changes the row goes on.
+  const claim = await env.DB.prepare("UPDATE jobs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'queued'")
+    .bind(deps.now(), job.id).run();
+  if (!claim.meta.changes) { throw new HttpError(409, 'job_started', 'This job was already started'); }
+  try {
+    if (job.kind === 'generateRubrics') {
+      const items = cleanItems(body.items);
+      await env.FILES.put(itemsKey(job.id), JSON.stringify(items), { httpMetadata: { contentType: 'application/json' } });
+    }
+    await env.GRADE_QUEUE.send({ type: 'job', jobId: job.id });
+  } catch (e) {
+    // Nothing was queued: give the job back so the teacher can press Run again.
+    await env.DB.prepare("UPDATE jobs SET status = 'queued' WHERE id = ? AND status = 'running'").bind(job.id).run();
+    throw e;
   }
-  await env.GRADE_QUEUE.send({ type: 'job', jobId: job.id });
   return { body: { success: true, status: 'queued' } };
 }
 

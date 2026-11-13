@@ -627,3 +627,36 @@ test('grading problems: the list offers "Regrade errors", shows token totals, an
   await until(() => page.requests.some((r) => r.url.endsWith('/attempts/' + w.attemptId + '/regrade')), 'regrade request');
   page.win.close();
 });
+
+test('in progress: an expired attempt with nothing saved is labelled and counted, and the detail adds time for one student', async () => {
+  const w = await setup();
+  // Two students still "in progress": one never saved anything, one is mid-exam with answers saved.
+  const never = await w.call('POST', '/api/start', { body: {
+    idToken: await w.google.token({ email: 'cris.diaz@marymount.edu.co' }), exam: 'EX1', set: 'A',
+    firstName: 'Cris', lastName: 'Diaz', class: '10A' } });
+  const busy = await w.call('POST', '/api/start', { body: {
+    idToken: await w.google.token({ email: 'dani.mora@marymount.edu.co' }), exam: 'EX1', set: 'A',
+    firstName: 'Dani', lastName: 'Mora', class: '10A' } });
+  await w.call('POST', '/api/save', { body: { attemptId: busy.json.attemptId, answers: { Q1: 1 } } });
+  w.clock.t += 61 * 60 * 1000;     // past the 60-minute deadline of both
+
+  const page = await signedIn(w);
+  await until(() => $(page, '#attemptsTable tbody tr[data-id]'), 'rows');
+  const row = (id) => $(page, '#attemptsTable tbody tr[data-id="' + id + '"]');
+  assert.match(row(never.json.attemptId).textContent, /Expired, nothing saved/);
+  assert.doesNotMatch(row(busy.json.attemptId).textContent, /Expired, nothing saved/);
+  assert.match(text(page, '.stats'), /Expired, nothing saved/);
+
+  // Extra time for the student who is still working.
+  row(busy.json.attemptId).click();
+  await until(() => $(page, '#extraMinutes'), 'deadline control');
+  const before = db(w).prepare('SELECT deadline_at FROM attempts WHERE id = ?').get(busy.json.attemptId).deadline_at;
+  $(page, '#extraMinutes').value = '12';
+  $(page, '#extraSave').click();
+  await until(() => db(w).prepare('SELECT deadline_manual FROM attempts WHERE id = ?').get(busy.json.attemptId).deadline_manual === 1, 'extension saved');
+  // Counted from now (the old deadline already passed), not from the old deadline.
+  assert.equal(db(w).prepare('SELECT deadline_at FROM attempts WHERE id = ?').get(busy.json.attemptId).deadline_at, w.clock.t + 12 * 60 * 1000);
+  assert.ok(w.clock.t + 12 * 60 * 1000 > before);
+  // A graded attempt has no deadline control.
+  page.win.close();
+});

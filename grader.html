@@ -1166,18 +1166,24 @@
         function saveAnswers() {
             answersDirty = true;   // picked up by the 30-second autosave on the new backend
             if (!answersSessionKey) { return; }
+            // `at` is the time of this keystroke on the SERVER's clock. On a reload,
+            // restoreAnswers only applies this copy when it is newer than what the
+            // server saved, so an old tab can never overwrite newer answers.
             sessionStorage.setItem(answersSessionKey, JSON.stringify({
+                at: Date.now() + clockOffsetMs,
                 mc: answers.mc,
                 openEnded: answers.openEnded
             }));
         }
 
-        function restoreAnswers() {
+        function restoreAnswers(serverSavedAt) {
             if (!answersSessionKey) { return; }
             var stored = sessionStorage.getItem(answersSessionKey);
             if (!stored) { return; }
             try {
                 var saved = JSON.parse(stored);
+                // A copy without a time (older page) or not newer than the server's save is ignored.
+                if (!saved.at || saved.at <= (serverSavedAt || 0)) { return; }
                 Object.keys(saved.mc || {}).forEach(function(qid) {
                     var letter = saved.mc[qid];
                     var radio  = document.querySelector('input[name="' + qid + '"][value="' + letter + '"]');
@@ -1512,10 +1518,14 @@
         // =====================================================================
         var attemptId = '';
         var deadlineMs = 0;            // deadline expressed on THIS computer's clock
+        var clockOffsetMs = 0;         // server clock minus this computer's clock, measured at start
+        var lastSaveSentAt = 0;        // when the last autosave request went out (see HEARTBEAT_MS)
         var answersDirty = false;      // true when answers changed since the last autosave
         var autosaveTimer = null;
         var resultPolling = false;
         var AUTOSAVE_MS = 30000;
+        var HEARTBEAT_MS = 60000;           // a save request at least this often, even when nothing changed (carries the deadline)
+        var POLL_GIVE_UP_MS = 30 * 60000;   // stop asking for the result after this long
 
         function apiBase() { return appsScriptUrl.replace(/\/$/, ''); }
 
@@ -1596,7 +1606,8 @@
                 attemptId = data.attemptId;
                 // Express the server's deadline on this computer's clock, so a wrong
                 // local clock cannot give extra time or take it away.
-                deadlineMs = data.deadlineAt - (data.serverNow - Date.now());
+                clockOffsetMs = data.serverNow - Date.now();
+                deadlineMs = data.deadlineAt - clockOffsetMs;
                 updateCloseNotices();
 
                 // Keep only the questions this student was served, in the served order,
@@ -1628,11 +1639,13 @@
                 document.getElementById('setDisplay').textContent = selectedSet;
                 document.getElementById('studentNameDisplay').textContent = fn + ' ' + ln;
 
-                answersSessionKey = 'exam_answers_' + currentEmail + '_' + selectedSet;
+                // Keyed by attempt (not by email + set): another exam with the same set and
+                // question ids must never share a browser copy.
+                answersSessionKey = 'exam_answers_' + attemptId;
                 renderSheets();
                 renderQuestions();
                 applyServerAnswers(data.answers);   // what the server has (maybe from another computer)
-                restoreAnswers();                   // then anything newer saved in this browser
+                restoreAnswers(data.answersSavedAt);   // then anything NEWER saved in this browser
                 examActive = true;
                 examStartTime = Date.now();
                 startTimer();
@@ -1661,14 +1674,23 @@
         function autosaveNow(force) {
             if (!BACKEND_V3 || !examActive || !attemptId) { return; }
             var pending = integ.events.length - integ.flushedUpTo;
-            if (!answersDirty && !force && pending === 0) { return; }
+            // Even with nothing to save, ask once a minute: the reply carries the deadline,
+            // which is how a teacher's extra time reaches a student who is just thinking.
+            var heartbeat = Date.now() - lastSaveSentAt >= HEARTBEAT_MS;
+            if (!answersDirty && !force && pending === 0 && !heartbeat) { return; }
             answersDirty = false;
+            lastSaveSentAt = Date.now();
             var sentUpTo = integ.events.length;
             v3Post('/api/save', { attemptId: attemptId, answers: answersForServer(),
                                   events: integ.events.slice(integ.flushedUpTo) })
                 .then(function (d) {
                     if (d.success) {
                         integ.flushedUpTo = Math.max(integ.flushedUpTo, sentUpTo);
+                        // Follow a deadline the teacher changed (extra time, earlier closing).
+                        if (d.deadlineAt) {
+                            var newDeadline = d.deadlineAt - (d.savedAt - Date.now());
+                            if (Math.abs(newDeadline - deadlineMs) > 1000) { deadlineMs = newDeadline; updateCloseNotices(); }
+                        }
                         // The server counts the faults itself and may close the exam.
                         if (d.autoSubmitted && !examSubmitted) { submitExamImmediately(); }
                     } else if (d.code === 'already_submitted') {
@@ -1922,7 +1944,19 @@
             document.getElementById('examContainer').classList.remove('active');
             document.getElementById('waitingScreen').classList.add('active');
             msgEl.textContent = 'Time is up. Grading in progress, please wait...';
+            var pollStarted = Date.now();
             (function poll() {
+                // Back off: every 4 s for the first minute, then every 15 s, and stop after
+                // 30 minutes. A whole class polling every 4 s was the biggest share of the
+                // day's requests while grading ran.
+                var waited = Date.now() - pollStarted;
+                if (waited > POLL_GIVE_UP_MS) {
+                    resultPolling = false;
+                    msgEl.textContent = 'Your exam was received. Your result is taking longer than expected: ' +
+                        'your teacher will release it, or open the Results page later.';
+                    return;
+                }
+                var pause = waited < 60000 ? 4000 : 15000;
                 v3Get('/api/result?attemptId=' + encodeURIComponent(attemptId))
                     .then(function (data) {
                         if (data.success && data.ready) { resultPolling = false; showResults(data); return; }
@@ -1930,9 +1964,9 @@
                             msgEl.textContent = 'Your exam was received, but grading hit a problem. ' +
                                 'Your teacher will release your result.';
                         }
-                        setTimeout(poll, 4000);
+                        setTimeout(poll, pause);
                     })
-                    .catch(function () { setTimeout(poll, 6000); });
+                    .catch(function () { setTimeout(poll, pause + 2000); });
             })();
         }
 

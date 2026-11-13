@@ -58,7 +58,15 @@ export class FakeD1 {
       },
     };
   }
-  async batch(stmts) { const out = []; for (const s of stmts) { out.push(await s.run()); } return out; }
+  // One D1 batch is ONE query against the per-invocation limit, however many
+  // statements it holds, so the counter is rewound to "before + 1" afterwards.
+  async batch(stmts) {
+    const before = this.queryCount;
+    const out = [];
+    for (const s of stmts) { out.push(await s.run()); }
+    this.queryCount = before + 1;
+    return out;
+  }
 }
 
 /** Generates an RSA key pair and a function that signs Google-style ID tokens. */
@@ -100,7 +108,7 @@ export async function makeWorld({ modelReply } = {}) {
   const env = {
     DB: new FakeD1(),
     FILES: new FakeR2(),
-    GRADE_QUEUE: { send: async (m) => { sent.push(m); } },
+    GRADE_QUEUE: { send: async (m) => { sent.push(m); }, sendBatch: async (list) => { list.forEach((m) => sent.push(m.body)); } },
     GRADING_MODEL: 'claude-sonnet-5-5', GOOGLE_CLIENT_ID: CLIENT_ID, ALLOWED_EMAIL_DOMAIN: 'marymount.edu.co',
     ALLOWED_ORIGINS: ORIGIN, SESSION_SECRET: 'test-session-secret', ANTHROPIC_API_KEY: 'test-key', MAIL_RELAY_URL: '', MAIL_RELAY_KEY: 'relay-secret',
   };

@@ -169,7 +169,7 @@ test('sweep submits an expired attempt that has autosaved answers, and leaves em
   await w.call('POST', '/api/save', { body: { attemptId: a.json.attemptId, answers: { Q1: 1 } } });
   const b = await start(w, await w.google.token({ email: 'bea@marymount.edu.co' }));   // never saved anything
 
-  w.clock.t += 62 * 60 * 1000;
+  w.clock.t += 63 * 60 * 1000;   // 3 minutes past the deadline: beyond the sweep grace (submit grace 120 s + 30 s)
   await w.app.scheduled({}, w.env);
   assert.equal(await w.drainQueue(), 1);
   const rows = w.env.DB.db.prepare('SELECT id, status FROM attempts').all();
@@ -291,7 +291,7 @@ test('a late starter gets only the time left until closes_at, and the sweep subm
   assert.equal(s.json.deadlineAt, t0 + 20 * 60 * 1000);     // not start + 60 min
   await w.call('POST', '/api/save', { body: { attemptId: s.json.attemptId, answers: { Q1: 1 } } });
 
-  w.clock.t = t0 + 20 * 60 * 1000 + 2 * 60 * 1000;          // 2 minutes after closing: past the 60 s sweep grace
+  w.clock.t = t0 + 20 * 60 * 1000 + 3 * 60 * 1000;          // 3 minutes after closing: past the 150 s sweep grace
   await w.app.scheduled({}, w.env);
   assert.equal(await w.drainQueue(), 1);
   assert.equal(w.env.DB.db.prepare('SELECT status FROM attempts').get().status, 'graded');

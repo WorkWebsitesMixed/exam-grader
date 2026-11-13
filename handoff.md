@@ -1,8 +1,16 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-11-12 (session 14 — audit plan written; audit phase P1 "grading reliability" implemented and tested, NOT deployed)_
+_Last updated: 2026-11-13 (session 15 — P0 and P1 done and live; P2 written and tested, NOT deployed; see the P2 section below)_
 
 **→ Start at [NEXT SESSION](#next-session-state-as-of-2026-11-12-session-14).** Below it, "START HERE: state as of 2026-11-09" describes what is live; the rest is history. §10 holds the Cloudflare migration decisions and a detailed dated Log (newest entries first).
+
+## P2 (exam-day correctness) written 2026-11-13: tested, NOT migrated, NOT deployed, NOT committed
+
+- `npm test` in `cloudflare-backend/`: 177 pass. Deploy only AFTER the 12:30 quiz of 2026-11-13, and never within 24 h before an exam.
+- Deploy order: (1) `npx wrangler d1 execute examgrader --remote --file=migrations/008_deadline.sql` (adds `attempts.deadline_manual`); (2) `npx wrangler deploy`; (3) commit and push `main` (publishes `grader.html` and `admin3.html`; the Worker must be live first because the pages call the new save reply and `answersSavedAt`); (4) smoke test with `QUIZ_TEST`: start, wait over a minute without typing, extend that student 5 min from Attempts and see her timer move; reload mid-exam and check answers come back.
+- What changed: sweep in one update + one `sendBatch`, emails capped at 5 per run, grace before auto-submit now 150 s (R5, R8); bulk tools Recalculate / Regrade MC in 4 queries per call (R6); per-student "Add time" (`PUT /api/admin/attempts/:id/deadline`, `deadline_manual`) and Settings saves no longer undo it (R7); `/api/exam` browser cache follows the window edge (R10); `/api/myresults` latest 20 (R11); browser answer copy keyed by attempt id and only applied when newer than the server save (R12, `grader.html`); PDF job Run claims atomically (R14); result polling backs off 4 s, then 15 s, stops at 30 min (R15, `grader.html`); class checked against the exam's list (S9); last admin cannot be demoted (S13); admin list labels "Expired, nothing saved".
+- Behaviour to remember: the page now sends a save request every 60 s even with no changes (heartbeat, carries the deadline). An exam with a class list now refuses an empty or unlisted class at start. Students mid-exam at deploy time lose only the browser copy of unsaved answers (old key format), not server-saved ones.
+- Pending, unchanged: D5 comparison (Andrés exports the API key; script `tools/d5-compare/` not written yet), D2/D3 for P3, D8/D9, D10, D11.
 
 ## NEXT SESSION: state as of 2026-11-12 (session 14)
 

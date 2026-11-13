@@ -236,3 +236,55 @@ test('a scheduled exam shows the red closing notice before the start and the exa
   assert.match(notice.textContent, /submitted automatically at \d\d:\d\d/);
   page.win.close();
 });
+
+test('the page follows a deadline the teacher changed: the next save reply moves the timer', async () => {
+  const w = await setup();
+  const page = openPage(w, `?src=${BASE}&exam=EX1`);
+  await signIn(w, page);
+  await startExam(page);
+  const original = page.win.deadlineMs;
+  const extended = original + 10 * 60 * 1000;
+  w.env.DB.db.prepare('UPDATE attempts SET deadline_at = ?, deadline_manual = 1').run(extended);
+
+  // Nothing was typed, yet the periodic save still goes out (heartbeat) and carries the deadline back.
+  page.win.autosaveNow(false);
+  await until(() => page.win.deadlineMs === extended, 'deadline updated from the save reply');
+  page.win.close();
+});
+
+test('a browser copy of the answers older than the server save is ignored; a newer one is applied', async () => {
+  const w = await setup();
+  const page = openPage(w, `?src=${BASE}&exam=EX1`);
+  await signIn(w, page);
+  await startExam(page);
+  const ta = page.doc.querySelector('textarea[data-qid="Q3"]');
+  ta.value = 'typed in this tab';
+  ta.dispatchEvent(new page.win.Event('input'));            // stores the copy with the time of this keystroke
+  const stored = JSON.parse(page.win.sessionStorage.getItem('exam_answers_' + page.win.attemptId));
+  assert.ok(stored.at > 0, 'the copy carries its time');
+
+  ta.value = 'newer text from the server';
+  page.win.restoreAnswers(stored.at + 60000);               // the server saved a minute AFTER the keystroke
+  assert.equal(ta.value, 'newer text from the server');
+  page.win.restoreAnswers(stored.at - 1);                   // the server copy is older: the browser one wins
+  assert.equal(ta.value, 'typed in this tab');
+  page.win.close();
+});
+
+test('after the deadline the page stops asking for the result after 30 minutes and says so', async () => {
+  const w = await setup();
+  const page = openPage(w, `?src=${BASE}&exam=EX1`);
+  await signIn(w, page);
+  await startExam(page);
+  page.win.confirmSubmit();
+  await until(() => /Results will appear when time is up/.test(page.doc.getElementById('waitingMsg').textContent), 'submitted');
+  // The queue is never drained, so the attempt stays ungraded.
+  w.clock.t += 46 * 60 * 1000;
+  await until(() => page.requests.some((r) => r.url.includes('/api/result')), 'first poll');
+  w.clock.t += 31 * 60 * 1000;
+  await until(() => /taking longer than expected/.test(page.doc.getElementById('waitingMsg').textContent), 'give-up message', 12000);
+  const polls = page.requests.filter((r) => r.url.includes('/api/result')).length;
+  await sleep(500);
+  assert.equal(page.requests.filter((r) => r.url.includes('/api/result')).length, polls, 'no more polling');
+  page.win.close();
+});

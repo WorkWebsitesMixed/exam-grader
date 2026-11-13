@@ -241,6 +241,10 @@
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
 
+  // An attempt whose time ran out and that never autosaved anything. The server sweep
+  // leaves it alone on purpose (nothing to grade), so it would look "In progress" forever.
+  function expiredEmpty(a) { return a.status === 'started' && !a.savedAt && a.deadlineAt < Date.now(); }
+
   var STATUS_LABEL = { started: 'In progress', submitted: 'Submitted', grading: 'Grading', graded: 'Graded', error: 'Error' };
   var EVENT_LABEL = {
     away: 'Left the tab', unfocus: 'Window lost focus', resize: 'Window shrunk (split screen)',
@@ -531,6 +535,7 @@
     var flagged = all.filter(function (a) { return a.faults > 0; }).length;
     var errors = all.filter(function (a) { return a.status === 'error'; }).length;
     var toReview = all.filter(function (a) { return a.needsReview > 0; }).length;
+    var emptyExpired = all.filter(expiredEmpty).length;
     // What AI grading has cost for this exam so far (all tries of all attempts).
     var tokIn = all.reduce(function (s, a) { return s + (a.tokensIn || 0); }, 0);
     var tokOut = all.reduce(function (s, a) { return s + (a.tokensOut || 0); }, 0);
@@ -570,7 +575,8 @@
         h('td', null, h('div', null, a.lastName + ', ' + a.firstName), h('div', { class: 'small muted' }, a.email)),
         h('td', null, a.class),
         h('td', null, a.set),
-        h('td', null, STATUS_LABEL[a.status] || a.status,
+        h('td', null, expiredEmpty(a) ? 'Expired, nothing saved' : (STATUS_LABEL[a.status] || a.status),
+          a.deadlineManual && a.status === 'started' ? h('div', { class: 'small muted' }, 'extra time given') : null,
           a.status === 'error' ? h('div', { class: 'small', style: 'color:var(--error)' }, a.gradingError || '') : null,
           // Questions the AI could not grade: they count 0 until the teacher enters a mark.
           a.needsReview ? h('div', null, h('span', { class: 'pill warn' }, a.needsReview + ' to review')) : null,
@@ -586,7 +592,8 @@
     return h('div', null,
       h('div', { class: 'stats' },
         stat(all.length, 'Attempts'), stat(graded.length, 'Graded'), stat(avg, 'Average'),
-        stat(flagged, 'With faults'), stat(errors, 'Errors'), stat(toReview, 'To review')),
+        stat(flagged, 'With faults'), stat(errors, 'Errors'), stat(toReview, 'To review'),
+        emptyExpired ? stat(emptyExpired, 'Expired, nothing saved') : null),
       h('div', { class: 'small muted', id: 'tokenTotals', style: 'margin:0 0 10px' },
         'AI grading so far: ' + tokIn.toLocaleString() + ' input and ' + tokOut.toLocaleString() + ' output tokens.'),
       h('div', { class: 'toolbar' },
@@ -671,6 +678,20 @@
           .then(function () { S.attempts = null; banner('Penalty updated.', 'okmsg'); openAttempt(a.id); })
           .catch(fail);
       } }, 'Save penalty'));
+  }
+
+  // Extra time for one student still working. The minutes are added to her current
+  // deadline; her page picks the new time up within about a minute (its next save).
+  // Closing-time changes in Settings leave an extended student alone.
+  function deadlineControl(a) {
+    var input = h('input', { type: 'number', id: 'extraMinutes', min: 1, max: 180, step: 1, value: '5', style: 'width:70px' });
+    return h('div', { class: 'toolbar', style: 'margin:10px 0 0' },
+      h('span', { class: 'small muted' }, 'Deadline ' + fmtDateTime(a.deadlineAt) + (a.deadlineManual ? ' (extended)' : '') + '. Add minutes:'), input,
+      h('button', { class: 'btn small', id: 'extraSave', onclick: function () {
+        api('PUT', '/api/admin/attempts/' + encodeURIComponent(a.id) + '/deadline', { extraMinutes: Number(input.value) })
+          .then(function () { S.attempts = null; banner('Time added. The student\'s page updates within about a minute.', 'okmsg'); openAttempt(a.id); })
+          .catch(fail);
+      } }, 'Add time'));
   }
 
   function attemptDetail(a) {
@@ -764,6 +785,7 @@
             'Score ' + a.totalScore + '/' + a.maxScore + ' (' + a.percentage + '%) · grade ' + a.finalGrade +
             ' · multiple choice ' + a.mcScore + ' · open ' + a.openScore + ' · penalty -' + a.penalty) : null),
         a.status === 'graded' ? penaltyControl(a) : null,
+        a.status === 'started' ? deadlineControl(a) : null,
         a.gradingError ? h('div', { class: 'msg err', style: 'margin-top:10px' }, a.gradingError) : null,
         a.tokensIn || a.tokensOut ? h('div', { class: 'small muted', style: 'margin-top:8px' },
           'AI grading: ' + a.tokensIn.toLocaleString() + ' input and ' + a.tokensOut.toLocaleString() + ' output tokens, ' +

@@ -18,7 +18,7 @@ What to check before, during and after an exam on the Cloudflare backend, and wh
 
 1. Attempts tab: the number of attempts started matches the students present.
 2. A student locked out or on the wrong set: open her attempt, read the integrity timeline, delete the attempt only if she must start again.
-3. Do not edit the closing time to give one student extra time: saving Settings re-applies the closing time to every attempt in progress.
+3. Extra time for one student: open her attempt in Attempts (status In progress) and use "Add time". Her page picks it up within about a minute. A later Settings save no longer undoes it. Add the time BEFORE hers runs out; once the sweep has submitted the attempt (2.5 minutes after her deadline) it cannot be extended.
 
 ## At the hard stop
 

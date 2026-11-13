@@ -167,6 +167,9 @@ CREATE TABLE IF NOT EXISTS attempts (
   tokens_in          INTEGER NOT NULL DEFAULT 0,
   tokens_out         INTEGER NOT NULL DEFAULT 0,
   needs_review       INTEGER NOT NULL DEFAULT 0,
+  -- 1 when a teacher set deadline_at by hand (per-student extension); a later
+  -- change of the exam's closing time then leaves this attempt alone.
+  deadline_manual    INTEGER NOT NULL DEFAULT 0,
   email_status  TEXT NOT NULL DEFAULT 'none'
                 CHECK (email_status IN ('none','pending','sent','failed')),
   -- Integrity log (src/integrity.js). `events` is the evidence the browser
