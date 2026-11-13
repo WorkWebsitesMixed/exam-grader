@@ -2,3 +2,15 @@
 # serves its root, so a committed CSV containing rubrics and accepted answers
 # would be downloadable at https://workwebsitesmixed.github.io/exam-grader/<file>.
 sample_exam_*.csv
+
+# Local-only material (audit P0, finding S5). Same reason as above: anything
+# committed here is published by GitHub Pages.
+#   tools/regrade-demo/  holds a .env with an API key and CSVs of real submissions
+#   diagrams/            internal architecture diagrams
+#   backups/             D1 exports (student data)
+#   AUDIT_PLAN.md        lists vulnerabilities that are still open
+tools/regrade-demo/
+diagrams/
+backups/
+AUDIT_PLAN.md
+handoff.private.md

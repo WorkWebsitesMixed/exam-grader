@@ -1,18 +1,59 @@
 # Exam Grader — Handoff Document
 
-_Last updated: 2026-11-09 (session 12 — school exam header, opening window and hard-stop closing, first real exam on the new backend, Analysis tab)_
+_Last updated: 2026-11-12 (session 14 — audit plan written; audit phase P1 "grading reliability" implemented and tested, NOT deployed)_
 
-**→ Start at [START HERE: state as of 2026-11-09](#start-here-state-as-of-2026-11-09-session-12).** Everything below it is history; §10 holds the Cloudflare migration decisions and a detailed dated Log (newest entries first).
+**→ Start at [NEXT SESSION](#next-session-state-as-of-2026-11-12-session-14).** Below it, "START HERE: state as of 2026-11-09" describes what is live; the rest is history. §10 holds the Cloudflare migration decisions and a detailed dated Log (newest entries first).
+
+## NEXT SESSION: state as of 2026-11-12 (session 14)
+
+### Where things stand
+- **`AUDIT_PLAN.md` exists** (repo root, local only, git-ignored on purpose: this repo is public and the file lists open findings). It holds the findings, the multi-teacher design, decisions D1–D11 and phases P0–P7. Read it before any audit work. Do not copy its findings into this file.
+- **Phase P1 (grading reliability and cost visibility) is written and tested but NOT committed, NOT migrated, NOT deployed.** `npm test` in `cloudflare-backend/`: 159 pass (148 before + 11 new). The live Worker is still the version from before this session.
+- **Why it was not deployed today:** an exam was scheduled for 15:00 on 2026-11-12, and the new request to Claude has never been sent to the real API (the tests use a fake model). Andrés decided to deploy on 2026-11-13.
+- Of phase P0 only the `.gitignore` lines are done (`tools/regrade-demo/`, `diagrams/`, `backups/`, `AUDIT_PLAN.md`). The rest of P0 waits on decisions D8 and D9.
+
+### What P1 changed (all uncommitted in the working tree)
+- `src/claude.js`: explicit settings per question type (`GRADING_PARAMS`): open-ended = adaptive thinking, effort `medium`, `max_tokens` 4000; short = thinking off (`{type: "between_tools"}`), effort `low`, `max_tokens` 400. Replies are enforced JSON `{score, feedback}` (`output_config.format`), no more `SCORE:` parsing. `stop_reason` is read: `max_tokens` is retried once at 4x the budget.
+- `src/grading.js`: a reply that is declined, still cut or has no score flags ONLY that question (`needsReview`, counts 0, student sees "Your teacher will mark this question."); a teacher override clears the flag. The student answer is wrapped in `<student_answer>` tags and declared untrusted.
+- `src/queue.js` `processGrade`: claims the attempt with one compare-and-set UPDATE (a duplicate message is skipped); stops as `error` after `MAX_GRADE_ATTEMPTS` = 5; saves partial results every 5 model-graded questions and on failure, so a retry only pays for what is missing; a retryable failure releases the attempt back to `submitted`. Sweep: stale `grading` is measured from `grading_started_at` (16 min); lost `submitted` is re-enqueued after 30 min (was 2).
+- `src/admin.js` + `src/index.js`: `POST /api/admin/attempts/:id/regrade` (graded or error) and `POST /api/admin/exams/:id/regrade-errors` (20 per call, repeat while `more`); grade boundaries validated on the server; attempts list and detail return `needsReview`, `tokensIn`, `tokensOut`.
+- `src/student.js`, `src/mail.js`: show the review text for a flagged question.
+- `admin3.html`: "Regrade N in error" button, "To review" stat and pill, token totals in the Attempts tab; "Grade again with AI" and the "Needs your mark" notice in the attempt detail.
+- `migrations/007_grading.sql` (+ `schema.sql`): `grade_attempts`, `grading_started_at`, `tokens_in`, `tokens_out`, `needs_review` on `attempts`.
+- `wrangler.toml`: `dead_letter_queue = "examgrader-grading-dlq"` on the consumer.
+- New: `cloudflare-backend/RUNBOOK.md` (exam-day runbook), `tests/grading.test.js`; one test added to `tests/admin-page.test.js`; `API.md` lists the two routes.
+
+### Next steps, in order (2026-11-13, a day without exams)
+1. `cd cloudflare-backend && npm test` (expect 159 pass).
+2. `npx wrangler d1 execute examgrader --remote --file=migrations/007_grading.sql`
+3. `npx wrangler queues create examgrader-grading-dlq` (not confirmed whether deploy would create it by itself).
+4. `npx wrangler deploy`
+5. Run `QUIZ_TEST` with one long open answer and one WRONG short answer; wait for `graded`. This is the first real check that the API accepts `between_tools` together with the JSON reply format. If the attempt ends in `error` or does not advance: `npx wrangler rollback`, then read the `grading_error` text.
+6. Only after step 5 passes: commit and push `main` (publishes `admin3.html`).
+7. Then decision D5: compare the new settings against about 20 answers Andrés has already overridden (needs real API calls on real submissions; not set up yet). After that, phase P2.
+
+### Behaviour changes to remember
+- A Claude outage of about five minutes now leaves the affected attempts in `error` (5 tries used); press "Regrade N in error" afterwards. Before, they retried forever.
+- A regraded attempt whose email was already sent is not emailed again; use "Resend emails".
+- Rolling back the Worker while attempts are in `error` leaves them without a regrade button (the old Worker has none).
+- Not added: the server-side refusal fallback to another model (beta header, untested with the JSON reply format). Refusals become "needs teacher review" instead.
+
+### Decisions (see `AUDIT_PLAN.md` §5 for the full table)
+Decided: D1 stay on Workers Free; D4 needs teacher review; D6 school-domain accounts, strict isolation, no co-owners; D7 keep the current mail relay and add `replyTo`. Open: D2, D3 (block P3), D5 (settled inside P1 by the comparison in step 7), D8, D9 (block the rest of P0), D10 (blocks P7), D11.
+
+### Key paths
+- `AUDIT_PLAN.md` (local only), `cloudflare-backend/RUNBOOK.md`, `cloudflare-backend/migrations/007_grading.sql`, `cloudflare-backend/tests/grading.test.js`
+- Grading path: `cloudflare-backend/src/claude.js`, `src/grading.js`, `src/queue.js`; regrade routes in `src/admin.js`
 
 ## START HERE: state as of 2026-11-09 (session 12)
 
 ### What is live and where
-- **Backend:** Cloudflare Worker `https://examgrader-api.marymount-exams.workers.dev` (D1 `examgrader`, R2 `exam-files`, queue `examgrader-grading`). Andrés deployed it on 2026-11-08 (version `cf2fe3f8`) and again before the 2026-11-09 exam (attempt deadlines showed the hard-stop code live). **Unverified:** whether migrations 004, 005, 006 are applied and whether the Worker built from `abf5017` is the one deployed. Check with `npx wrangler d1 execute examgrader --remote --command "PRAGMA table_info(exams)"` (look for `grade_level`, `subject`) and `PRAGMA table_info(questions)` (look for `topic`).
+- **Backend:** Cloudflare Worker `https://examgrader-api.marymount-exams.workers.dev` (D1 `examgrader`, R2 `exam-files`, queue `examgrader-grading`). Andrés deployed it on 2026-11-08 (version `cf2fe3f8`) and again before the 2026-11-09 exam (attempt deadlines showed the hard-stop code live). **Confirmed by Andrés on 2026-11-12:** migrations 004–006, the topic seed and the deploy are done and working (header, Classes, Analysis tab).
 - **Frontend:** GitHub Pages from `main` (`abf5017`): `grader.html`, `results.html`, `admin3.html` (the admin panel, new backend), `marymount-logo.png`. Old `admin.html` and the Apps Script path are untouched legacy.
-- **Exams in D1 (checked 2026-11-09):** `M2_mock_T1_reduced` (G10, 65 min, ~58 attempts sat it on 2026-11-09, window 07:30–08:35; its `class_options` was EMPTY so the class dropdown showed nothing: set Classes in Settings); `G11_T1_W1-5` and `G10_M2_T1` are still `active = 1`; `QUIZ_TEST` (5 min, 7 questions, all types, closed) is the smoke-test exam, source `sample_exam_quiz_test.csv` (git-ignored), re-import with `tools/import-sheet.mjs --replace`.
+- **Exams in D1 (checked 2026-11-09):** `M2_mock_T1_reduced` (G10, 65 min, ~58 attempts sat it on 2026-11-09, window 07:30–08:35; its `class_options` was EMPTY so the class dropdown showed nothing: set Classes in Settings); `G11_T1_W1-5` and `G10_M2_T1` were closed by Andrés on 2026-11-12; `QUIZ_TEST` (5 min, 7 questions, all types, closed) is the smoke-test exam, source `sample_exam_quiz_test.csv` (git-ignored), re-import with `tools/import-sheet.mjs --replace`.
 
-### Pending activation (committed in `main`, NOT yet live unless the check above says otherwise)
-From `cloudflare-backend/`, in this order: `migrations/004_header.sql`, `005_subject.sql`, `006_topic.sql` (each fails harmlessly with "duplicate column name" if already applied), then `tools/seed-topics-M2_mock_T1_reduced.sql`, then `npx wrangler deploy`. Then in admin3: set Classes, Grade, Term (and Year) per exam so the header and learning goal print.
+### Activation: DONE (2026-11-12)
+Migrations 004–006, topic seed and Worker deploy are applied and working. Nothing pending there.
 
 ### Built this session (details in the §10 Log, newest first)
 - **Opening window** (`opens_at`/`closes_at`, migration 003): open = `active` master switch AND server time inside the window. **`closes_at` is a hard stop:** `deadline_at = min(start + duration, closes_at)`, the page timer follows it, the sweep submits expired attempts that autosaved, and saving `closesAt` shortens attempts in progress (never extends). Red notices in grader.html (class step and inside the exam).
@@ -25,24 +66,32 @@ From `cloudflare-backend/`, in this order: `migrations/004_header.sql`, `005_sub
 
 ### Operational facts from the 2026-11-09 exam
 - Fixed live: Q11/Q12 figures were missing (uploaded to R2 by hand, `image_hash` set on those two rows); class dropdown empty (Classes field).
-- **Per-student time extension was done by hand in D1:** attempt `0ebe80ea` (María José de los Ríos Paternina, 10A) `deadline_at` moved to 08:49:00. Only that attempt differs from 08:35:00. Her page keeps the old timer until she reloads. **Known gap:** `updateExam` re-applies `closes_at` to every started attempt on EVERY Settings save that includes `closesAt` (admin3 always sends it), which would undo such extensions. Fix idea: apply it only when `closes_at` actually changed. A proper "extra minutes for one student" control in the attempt detail would be the clean version.
+- **Per-student time extension was done by hand in D1:** one 10A student's attempt `deadline_at` moved to 08:49:00 (identity in the private note). Only that attempt differs from 08:35:00. Her page keeps the old timer until she reloads. **Known gap:** `updateExam` re-applies `closes_at` to every started attempt on EVERY Settings save that includes `closesAt` (admin3 always sends it), which would undo such extensions. Fix idea: apply it only when `closes_at` actually changed. A proper "extra minutes for one student" control in the attempt detail would be the clean version.
 - **AI grading cost and a risk:** Sonnet 5.5 is $2 / $10 per MTok; ~70 students on a 5 open + 18 short exam is estimated at $2–8 (unmeasured). `callMessages` in `src/claude.js` sends no `thinking` or `effort`, so Sonnet 5.5 runs adaptive thinking at high effort; thinking tokens are billed as output and count inside `max_tokens: 1024`, so a long answer could exhaust the budget and return no text, which becomes a non-retryable `error`. Proposed (NOT done): `thinking: {type: "between_tools"}` (the way to turn thinking off on Sonnet 5.5, effort `high` or lower) or a higher `max_tokens`; test with `QUIZ_TEST` then deploy. Andrés' API balance was $14.36 on 2026-11-08.
 - Student message for the exam day was drafted (links, rules, results release, "come and talk to me if you disagree with the automatic feedback"). The results page and email do NOT yet say that last sentence (offered, not built).
 
 ### Decisions made (this session)
 Closing time = hard stop; admin panel keeps `active` as master switch; one default scale; header in English only; level out of the header but kept in feedback; Analysis computed in the browser, one exam at a time, topics free-text per question; other teachers with their own admin panel is deferred (needs an exam owner); no performance-level descriptors for now.
 
-### Next steps
-1. Activate the pending items above and verify in a browser: admin3 Settings (Exam header, Classes, Opens/Closes), the share links, the header inside the exam, the Analysis tab on `M2_mock_T1_reduced`.
-2. Fix the Settings-save override of per-student extensions (see above) and decide on a per-student extra-time control.
-3. Decide on the AI grading `thinking`/`max_tokens` change (cost and the no-text risk).
-4. Review Q2 ("This question is about drawing") and Q10 (Table 10.1) of `M2_mock_T1_reduced`: they may need figures, none exist in the folder.
-5. Optional: put the "come and discuss your grade" sentence on the results screen, results.html and the email; serve questions only from `/api/start` (cross-section leak risk, §10 next steps 7).
-6. Close or schedule the other open exams (`G11_T1_W1-5`, `G10_M2_T1` still active); remove `labcheck.html` from `main`.
-7. Later: other teachers with their own panel, comparing exams, performance-level descriptors, `tools/regrade-demo/` (untracked, not described anywhere).
-8. Carry forward: admin password rotation, locking the old v1 spreadsheet, Phase 5.
+### Andrés' goal for the project (stated 2026-11-12)
+Make it robust and truly operational. Main target: **other teachers use it independently from Andrés, with Andrés as admin** (each teacher manages only their own exams, classes and results; Andrés sees and administers everything). Today there is no exam owner in the data model, and the admin panel is a single shared password. Andrés is happy with how it works now; improvements are welcome but nothing should regress.
+
+### Plan: Fable audit, then Sonnet implements
+Andrés will open a NEW session with the Fable model, read-only, to audit the whole project and write a proposed action plan to `AUDIT_PLAN.md` (no code changes, no commits, no deploys). Sonnet then implements the plan in later sessions. Audit scope: security and authorization (admin auth, multi-teacher isolation, student data leaks incl. cross-section question leak), multi-teacher architecture (owner per exam, roles, admin-of-admins, onboarding), reliability (D1/R2/queue failure modes, grading retries, the 10 ms CPU limit, hard-stop and sweep races), AI grading (`thinking`/`max_tokens` no-text risk, cost, consistency), tests, ops (migrations, deploy, backups, monitoring), cleanup of legacy (Apps Script v1/v2, `admin.html`, `labcheck.html`, `tools/regrade-demo/`). The prompt Andrés will paste is in the 2026-11-12 chat; the scope above is its summary.
+
+### Backlog (decided 2026-11-12; implement after the audit plan, or earlier if the plan says so)
+1. **Per-student time extension, optional, in admin3:** a control in the attempt detail or Settings with a student email and a specific closing time; leave empty to use none. It must survive later Settings saves: also fix `updateExam` so `closesAt` is re-applied to started attempts only when `closes_at` actually changed. (The 2026-11-09 manual D1 edit for attempt `0ebe80ea` is a one-off, already over.)
+2. AI grading `thinking`/`max_tokens` change: left to the audit; test with `QUIZ_TEST` before any deploy.
+3. "Come and discuss your grade" sentence on results screen, results.html and email: left to the audit.
+4. Serve questions only from `/api/start` (cross-section leak risk, §10 next steps 7): left to the audit.
+5. Later: comparing exams, performance-level descriptors, `tools/regrade-demo/` (untracked, undocumented).
+6. Carry forward: admin password rotation, locking the old v1 spreadsheet, Phase 5.
+
+### Closed (2026-11-12, by Andrés)
+M2_mock_T1_reduced Q2/Q10 figures (exam already sat); `G11_T1_W1-5` and `G10_M2_T1` closed. Still to remove from `main`: `labcheck.html`.
 
 ### Key paths
+`diagrams/` (5 interactive Archify diagrams of how the system operates, specs in `diagrams/src/*.json`, README inside; created 2026-11-11, not committed; Pages would serve them publicly if pushed).
 `cloudflare-backend/` (`src/` student.js, admin.js, analysis.js, header.js, goals.js, grading.js, mail.js, queue.js; `schema.sql`; `migrations/003`–`006`; `tools/import-sheet.mjs`, `tools/seed-topics-*.sql`; `tests/`, `npm test` = 147 tests), `grader.html`, `results.html`, `admin3.html`, `marymount-logo.png`, `sample_exam_quiz_test.csv`, `~/.claude/skills/exam-set/` (SKILL.md, header-template.tex), exam sources under `~/Documents/Marymount/exams/<grade>/<exam>/`.
 
 ---
@@ -376,7 +425,7 @@ Append `?src=<that URL>` to any page. `index.html` is a hub that builds the othe
    - **Retake exemption** works (two submissions, same account, same exam).
    - **Admin panel** loads submissions with the correct password.
    - **Not yet verified:** results **email delivery** (see MailApp note in *Known pending features*), and that `myresults` returns only the requesting student's own row.
-5. [ ] **Irreversible, only after 4 is green — MANUAL, Andrés's personal account:** archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`; delete or lock sharing on the old production spreadsheet (real student PII). Cannot be automated from this repo: the old v1 Apps Script project's `scriptId` is unknown (it was never clasp-managed), and the old spreadsheet lives in `anfforerobe@gmail.com`, which is not the account any local tooling is connected to. **Ordering note:** the v1 system is the only rollback path if step 4 fails, so do not destroy it first.
+5. [ ] **Irreversible, only after 4 is green — MANUAL, Andrés's personal account:** archive deployments `AKfycby0QSDa…` and `AKfycbxLSz18…`; delete or lock sharing on the old production spreadsheet (real student PII). Cannot be automated from this repo: the old v1 Apps Script project's `scriptId` is unknown (it was never clasp-managed), and the old spreadsheet lives in the personal Google account (see handoff.private.md), which is not the account any local tooling is connected to. **Ordering note:** the v1 system is the only rollback path if step 4 fails, so do not destroy it first.
 6. [x] **DONE 2026-08-09** — `exam-grader-v2-preview` retired: Pages site deleted (now 404) and repo **archived** (reversible; not deleted). Production Pages unaffected (200).
 
 ### Test exam
@@ -398,7 +447,7 @@ To use it: paste the rows under the existing `Questions` header, set Config `exa
 1. [x] **Submissions sheet cleared** — dev-test ghost rows removed (Andrés, manual).
 2. [x] **Results emails confirmed working** — Andrés received the email for the last test exam.
 3. [ ] **Rotate the admin password** — still open. Note: hashing the stored password is a `Code.gs` **code change**, not something to do in the sheet — `getAdminPassword()` (Code.gs:136) and `checkAdminAuthResult()` (Code.gs:184) would need to hash with `Utilities.computeDigest` before comparing, and the save path (Code.gs:~1259) would hash before writing. Not yet implemented; for now, "rotate" means just typing a new plaintext value into the admin panel's password field.
-4. [ ] **Lock the old v1 spreadsheet** — this is a Google Sheets **sharing-settings** action (Share → Manage access → remove all non-owner collaborators / restrict general access), not a code change. Still blocked on Andrés doing it manually from the `anfforerobe@gmail.com` account (§7 runbook step 5) — no local tooling has access there.
+4. [ ] **Lock the old v1 spreadsheet** — this is a Google Sheets **sharing-settings** action (Share → Manage access → remove all non-owner collaborators / restrict general access), not a code change. Still blocked on Andrés doing it manually from the the personal Google account (see handoff.private.md) account (§7 runbook step 5) — no local tooling has access there.
 5. [x] **Workbook renamed** to "Exam Grader Production".
 
 ### In progress — Admin UX Tier 2 (batch 1, session 9)
@@ -526,7 +575,7 @@ Andrés decided to migrate the backend from Apps Script to **Cloudflare Workers 
 8. Carry forward from §8–§9: admin password rotation, locking the old v1 spreadsheet, browser-verifying Tier 2 admin batches, building a real IGCSE paper, Phase 5.
 
 ### Blocked / waiting on the user
-- **Update 2026-10-10:** (a) answered — Google sign-in with a teachers allowlist, seeded with `andres.forero@marymount.edu.co` and `felipe.velasquez@marymount.edu.co`, more teachers only when it scales; (b) answered — R2, activated by Andrés (no bucket created yet; he may add a budget alert in the R2 billing panel). Still open: (c) autosave and (d) history migration.
+- **Update 2026-10-10:** (a) answered — Google sign-in with a teachers allowlist, seeded with the two teacher emails (private note), more teachers only when it scales; (b) answered — R2, activated by Andrés (no bucket created yet; he may add a budget alert in the R2 billing panel). Still open: (c) autosave and (d) history migration.
 - **Four open questions (original wording):** (a) admin access: Google sign-in with a teacher email allowlist (recommended; today there is no login throttling and the password is plaintext) vs shared password; (b) images: R2 (10 GB/month, 1 M Class A, 10 M Class B, free egress) vs D1 BLOB (2 MB per row); (c) server-side autosave of answers every ~30 s (about 7,000 D1 writes per 60-student session vs 100,000/day cap); (d) migrate existing submissions into D1 or keep them in the sheet as archive.
 - **`labcheck.html` is committed on `main`** (commit `f786639`, "Add temporary lab check page"; a later update with the report-to-Worker code was meant to be committed too — unverified which commit). Andrés must remove it from `main` when the lab tests end.
 - 7 lab PCs could not be tested (remote wake-up failed).
@@ -537,7 +586,7 @@ Andrés decided to migrate the backend from Apps Script to **Cloudflare Workers 
 - `tools/loadtest/loadtest.mjs` — burst script. `node loadtest.mjs --url https://examgrader-loadtest.marymount-exams.workers.dev --waves 25,60,120 --gap 15`; optional `--baseline <apps script /exec>` (loads production; run outside class).
 - `tools/loadtest/labcheck.html` — lab network probe (copy to repo root to publish). Burst mode: `...labcheck.html?run=<tag>&src=<exec url>&worker=<worker url>`; read the aggregate at `<worker>/reports?run=<tag>`. Verdicts: OK, FLAKY, NOCORS (answered without CORS: Apps Script error page OR a filter's block page; the browser cannot tell), UNREACHABLE.
 - `tools/loadtest/README.md` — setup and cleanup steps.
-- Cloudflare account: `anfforerobe@gmail.com`, account id `86e7f13a45d21c1249dfcf06dc457770`, workers.dev subdomain `marymount-exams` (renamed in the dashboard), Worker `https://examgrader-loadtest.marymount-exams.workers.dev`, D1 `examgrader-loadtest` id `f87eb99e-49f2-4e2e-8403-53cf59c67558` (region ENAM). Test data in run tag `selftest` is a fake report.
+- Cloudflare account: details in the private note (`handoff.private.md`), workers.dev subdomain `marymount-exams` (renamed in the dashboard), Worker `https://examgrader-loadtest.marymount-exams.workers.dev`, D1 `examgrader-loadtest` (region ENAM). Test data in run tag `selftest` is a fake report.
 - Git: branch `cloudflare-migration` exists (created from `main`, no commits); Andrés is currently on `main` with `tools/` untracked.
 
 ### Gotchas
