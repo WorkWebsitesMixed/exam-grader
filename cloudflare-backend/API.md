@@ -46,6 +46,7 @@ Free-plan numbers this relies on (official pages, fetched 2026-10-08): Workers 1
 | `PUT /api/admin/attempts/:id/overrides` | `override` |
 | `DELETE /api/admin/attempts/:id`, `POST /api/admin/attempts/:id/reset` | `deleteSubmission` (+ new: reset a stuck attempt so the student can start again) |
 | `POST /api/admin/exams/:id/recalculate`, `POST .../regrade-mc`, `POST .../resend-emails` | `recalculate`, `regrademc`, `resendEmails` — always scoped to one exam |
+| `POST /api/admin/attempts/:id/regrade`, `POST /api/admin/exams/:id/regrade-errors` | New (no Code.gs equivalent). Grade again with the model: one attempt that is `graded` or `error`, or every `error` attempt of an exam (20 per call, repeat while `more` is true). Overrides and penalty are kept. |
 | `GET /api/admin/exams/:id/distractors` | `mcDistractors` |
 | `GET/POST/DELETE /api/admin/teachers` (role admin) | new |
 | `GET /api/admin/exams/:id/export` (JSON; also accepts `EXPORT_KEY`) | new: feeds the Sheets archive and the Raspberry Pi backup |

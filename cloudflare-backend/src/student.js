@@ -18,7 +18,7 @@ import { HttpError, clampInt } from './http.js';
 import { verifyGoogleIdToken } from './auth.js';
 import { buildPaper, publicQuestion } from './paper.js';
 import { examHeader } from './header.js';
-import { DEFAULT_BOUNDARIES, levelForGrade } from './grading.js';
+import { DEFAULT_BOUNDARIES, feedbackFor, levelForGrade } from './grading.js';
 import { sanitizeEvents, mergeEvents, withLegacySwitches, assessEvents, parseEvents, MAX_FAULTS, FAULT_POINTS } from './integrity.js';
 
 // Seconds of grace after the deadline during which autosave is still accepted
@@ -352,7 +352,7 @@ function formatResult(attempt) {
                         correctText: r.correctText, earned: score, points: r.max });
     } else {
       openFeedback.push({ questionId: qid, questionText: r.text, studentAnswer: r.answer || '', score,
-                          maxScore: r.max, feedback: r.feedback || '', type: r.type, accepted: r.accepted || '' });
+                          maxScore: r.max, feedback: feedbackFor(r, overrides[qid]), type: r.type, accepted: r.accepted || '' });
     }
   }
   return {
@@ -415,7 +415,7 @@ export async function myResults(c) {
         correctAnswer: isMc ? r.correctText : (r.accepted || ''),
         isCorrect: isMc ? (r.correct ? 'TRUE' : 'FALSE') : '',
         aiScore: score, maxScore: r.max,
-        aiFeedback: isMc ? (r.correct ? 'Correct' : 'Incorrect. Correct answer: ' + r.correctText) : (r.feedback || ''),
+        aiFeedback: isMc ? (r.correct ? 'Correct' : 'Incorrect. Correct answer: ' + r.correctText) : feedbackFor(r, overrides[qid]),
       };
     });
     return {

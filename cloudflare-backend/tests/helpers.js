@@ -118,8 +118,12 @@ export async function makeWorld({ modelReply } = {}) {
         const body = JSON.parse(init.body);
         const user = body.messages[0].content;
         modelCalls.push({ system: body.system, user });
-        const text = modelReply ? modelReply(body.system, user) : 'SCORE: 99\nFEEDBACK: Well done, a thorough answer.';
-        return new Response(JSON.stringify({ content: [{ type: 'text', text }], usage: { input_tokens: 4200, output_tokens: 900 } }), { status: 200 });
+        modelCalls[modelCalls.length - 1].body = body;
+        // modelReply may return the reply text, or a whole Messages API response
+        // object (to fake stop_reason "max_tokens" / "refusal").
+        const reply = modelReply ? modelReply(body.system, user, body) : '{"score": 99, "feedback": "Well done, a thorough answer."}';
+        const message = typeof reply === 'string' ? { content: [{ type: 'text', text: reply }], stop_reason: 'end_turn' } : reply;
+        return new Response(JSON.stringify({ usage: { input_tokens: 4200, output_tokens: 900 }, ...message }), { status: 200 });
       }
       if (String(url).startsWith('https://relay.test/')) {
         if (relay.mode === 'down') { throw new Error('relay unreachable'); }

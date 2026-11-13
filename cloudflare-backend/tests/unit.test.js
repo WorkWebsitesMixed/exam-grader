@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateGrade, parseBoundaryString, computeTotals, normalizeShort,
-         parseScoreFeedback, DEFAULT_BOUNDARIES, levelForGrade, minMarksFor } from '../src/grading.js';
+         verdictToGrade, DEFAULT_BOUNDARIES, levelForGrade, minMarksFor } from '../src/grading.js';
 import { buildPaper, publicQuestion } from '../src/paper.js';
 
 test('every set uses the school scale by default', () => {
@@ -63,10 +63,14 @@ test('overrides replace non-MC scores only, and penalty cannot push below zero',
   assert.equal(computeTotals(paper, {}, {}, 4).totalScore, 0);
 });
 
-test('normalizeShort and parseScoreFeedback', () => {
+test('normalizeShort and verdictToGrade', () => {
   assert.equal(normalizeShort('  Paris   FRANCE '), 'paris france');
-  assert.deepEqual(parseScoreFeedback('SCORE: 7\nFEEDBACK: Good.\nMore.', 6, 'x'), { score: 6, feedback: 'Good.\nMore.' });
-  assert.deepEqual(parseScoreFeedback('no format', 6, 'fallback'), { score: 0, feedback: 'no format' });
+  // The score is clamped to the question's marks; empty feedback gets the fallback.
+  assert.deepEqual(verdictToGrade({ score: 7, feedback: 'Good.' }, 6, 'x'), { score: 6, feedback: 'Good.' });
+  assert.deepEqual(verdictToGrade({ score: -2, feedback: '' }, 6, 'fallback'), { score: 0, feedback: 'fallback' });
+  // A reply the model layer could not use is never a silent zero: it is flagged.
+  assert.deepEqual(verdictToGrade({ review: 'no score' }, 6, 'x'),
+    { score: 0, feedback: '', needsReview: true, reviewReason: 'no score' });
 });
 
 const mkQ = (qid, type, extra = {}) => ({ qid, type, set_id: 'A', position: 0, section: '', points: 1, text: qid,

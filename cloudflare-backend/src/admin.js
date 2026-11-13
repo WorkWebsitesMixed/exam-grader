@@ -23,12 +23,13 @@ import { HttpError, clampInt } from './http.js';
 import { verifyGoogleIdToken, signSession } from './auth.js';
 import { DEFAULT_DIRECTIONS } from './header.js';
 import { goalFor } from './goals.js';
-import { calculateGrade, computeTotals, gradeQuestion } from './grading.js';
+import { calculateGrade, computeTotals, countNeedsReview, gradeQuestion } from './grading.js';
 import { boundariesOf } from './queue.js';
 import { assessEvents, parseEvents } from './integrity.js';
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_UPDATES_PER_CALL = 40;  // + 2 selects stays under D1's 50 queries/invocation
+const MAX_REGRADE_PER_CALL = 20;  // each one is a queue send; the page repeats the call while `more` is true
 
 // ---------- login ----------
 
@@ -50,6 +51,32 @@ export async function me(c) {
 // ---------- exams ----------
 
 const EXAM_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/**
+ * Validates grade boundaries: {A: [{grade, min}, ...], B: [...], C: [...]},
+ * any set may be missing (it then uses the school scale). Checked on the
+ * server, not only in the page, because a malformed list (for example an
+ * object where the array should be) makes calculateGrade throw AFTER the model
+ * calls of every attempt of that exam have been paid for.
+ */
+function cleanBoundaries(input) {
+  const bad = (why) => new HttpError(400, 'bad_request', 'gradeBoundaries: ' + why);
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) { throw bad('must be an object keyed by set'); }
+  const out = {};
+  for (const setId of Object.keys(input)) {
+    if (!['A', 'B', 'C'].includes(setId)) { throw bad('unknown set ' + setId); }
+    const list = input[setId];
+    if (!Array.isArray(list) || list.length > 20) { throw bad('set ' + setId + ' must be a list of at most 20 entries'); }
+    out[setId] = list.map((b) => {
+      const grade = b && typeof b.grade === 'string' ? b.grade.trim() : '';
+      const min = b ? b.min : NaN;
+      if (!grade || grade.length > 10) { throw bad('each entry needs a grade (text, max 10 characters)'); }
+      if (typeof min !== 'number' || !Number.isFinite(min) || min < 0 || min > 100) { throw bad('each min must be a number from 0 to 100'); }
+      return { grade, min };
+    });
+  }
+  return out;
+}
 
 /** Validates the editable exam fields; returns a {column: value} object of what was supplied. */
 function examFields(body) {
@@ -102,8 +129,7 @@ function examFields(body) {
   if (body.oePerSet !== undefined) { out.oe_per_set = clampInt(body.oePerSet, 0, 1000); }
   if (body.randomize !== undefined) { out.randomize = body.randomize ? 1 : 0; }
   if (body.gradeBoundaries !== undefined) {
-    if (typeof body.gradeBoundaries !== 'object' || body.gradeBoundaries === null) { throw new HttpError(400, 'bad_request', 'gradeBoundaries'); }
-    out.grade_boundaries = JSON.stringify(body.gradeBoundaries);
+    out.grade_boundaries = JSON.stringify(cleanBoundaries(body.gradeBoundaries));
   }
   if (body.setCards !== undefined) {
     if (typeof body.setCards !== 'object' || body.setCards === null) { throw new HttpError(400, 'bad_request', 'setCards'); }
@@ -334,7 +360,7 @@ export async function listAttempts(c) {
   const { results } = await c.env.DB.prepare(
     'SELECT id, exam_id, set_id, email, first_name, last_name, class, started_at, submitted_at, deadline_at, status, ' +
     'tab_switches, penalty, mc_score, open_score, total_score, max_score, percentage, final_grade, email_status, ' +
-    'grading_error, faults, warnings, away_ms, paste_events, paste_chars FROM attempts WHERE exam_id = ? ORDER BY started_at DESC').bind(examId).all();
+    'grading_error, faults, warnings, away_ms, paste_events, paste_chars, needs_review, tokens_in, tokens_out FROM attempts WHERE exam_id = ? ORDER BY started_at DESC').bind(examId).all();
   return { body: { success: true, attempts: results.map((a) => ({
     id: a.id, examId: a.exam_id, set: a.set_id, email: a.email, firstName: a.first_name, lastName: a.last_name,
     class: a.class, timestamp: new Date(a.started_at).toISOString(), submittedAt: a.submitted_at,
@@ -343,6 +369,8 @@ export async function listAttempts(c) {
     percentage: a.percentage, finalGrade: a.final_grade, emailStatus: a.email_status, gradingError: a.grading_error,
     // Integrity summary (details in the attempt view)
     faults: a.faults, warnings: a.warnings, awayMs: a.away_ms, pasteEvents: a.paste_events, pasteChars: a.paste_chars,
+    // Grading bookkeeping: questions waiting for the teacher, and what the model calls cost.
+    needsReview: a.needs_review, tokensIn: a.tokens_in, tokensOut: a.tokens_out,
   })) } };
 }
 
@@ -362,6 +390,7 @@ export async function getAttempt(c) {
     results: a.results ? JSON.parse(a.results) : null, overrides: JSON.parse(a.overrides || '{}'),
     mcScore: a.mc_score, openScore: a.open_score, totalScore: a.total_score, maxScore: a.max_score,
     percentage: a.percentage, finalGrade: a.final_grade, gradingError: a.grading_error,
+    needsReview: a.needs_review, gradeAttempts: a.grade_attempts, tokensIn: a.tokens_in, tokensOut: a.tokens_out,
     integrity: (() => {
       const v = assessEvents(parseEvents(a.events));
       return { faults: v.faults, warnings: v.warnings, penalty: v.penalty, awayMs: v.awayMs,
@@ -386,9 +415,10 @@ async function writeTotals(env, attempt, exam, paperQuestions, results, override
   const grade = calculateGrade(totals.percentage, attempt.set_id, boundariesOf(exam));
   await env.DB.prepare(
     'UPDATE attempts SET results = ?, overrides = ?, mc_score = ?, open_score = ?, max_score = ?, total_score = ?, ' +
-    'percentage = ?, final_grade = ? WHERE id = ?')
+    'percentage = ?, final_grade = ?, needs_review = ? WHERE id = ?')
+    // needs_review is recounted here because an override is what clears a "needs teacher review" flag.
     .bind(JSON.stringify(results), JSON.stringify(overrides), totals.mcScore, totals.openScore, totals.maxScore,
-          totals.totalScore, totals.percentage, grade, attempt.id).run();
+          totals.totalScore, totals.percentage, grade, countNeedsReview(paperQuestions, results, overrides), attempt.id).run();
   return { ...totals, finalGrade: grade };
 }
 
@@ -439,6 +469,50 @@ export async function setPenalty(c) {
 export async function deleteAttempt(c) {
   await c.env.DB.prepare('DELETE FROM attempts WHERE id = ?').bind(c.params.id).run();
   return { body: { success: true } };
+}
+
+// ---------- regrade (calls the model again) ----------
+
+// Sends an attempt back to the start of grading: status `submitted`, the try
+// counter at zero and the stored results cleared so every written answer is
+// marked again. Teacher overrides and the integrity penalty are kept.
+const RESET_FOR_REGRADE =
+  "UPDATE attempts SET status = 'submitted', results = NULL, grade_attempts = 0, grading_started_at = NULL, " +
+  'grading_error = NULL, submitted_at = COALESCE(submitted_at, ?) ';
+
+/**
+ * Grades one attempt again with the model. Two uses:
+ *   - an attempt in `error` (bad API key, no credit, 5 failed tries) once the cause is fixed;
+ *   - a `graded` attempt after its rubric or accepted answers were corrected.
+ * An attempt that is waiting or being graded right now is refused (409).
+ */
+export async function regradeAttempt(c) {
+  const a = await requireAttempt(c.env, c.params.id);
+  if (!['error', 'graded'].includes(a.status)) {
+    throw new HttpError(409, 'not_regradable', 'Only attempts that are graded or in error can be graded again');
+  }
+  const r = await c.env.DB.prepare(RESET_FOR_REGRADE + "WHERE id = ? AND status IN ('error','graded')")
+    .bind(c.deps.now(), a.id).run();
+  if (r.meta.changes) { await c.env.GRADE_QUEUE.send({ type: 'grade', attemptId: a.id }); }
+  return { body: { success: true, status: 'queued' } };
+}
+
+/**
+ * Sends every `error` attempt of one exam back to grading, a few per call.
+ * The page repeats the call while `more` is true. If a queue send fails the
+ * attempt is already `submitted`, so the sweep enqueues it later.
+ */
+export async function regradeErrors(c) {
+  await requireExam(c.env, c.params.id);
+  const { results } = await c.env.DB.prepare("SELECT id FROM attempts WHERE exam_id = ? AND status = 'error' LIMIT ?")
+    .bind(c.params.id, MAX_REGRADE_PER_CALL + 1).all();
+  const ids = results.slice(0, MAX_REGRADE_PER_CALL).map((r) => r.id);
+  if (ids.length) {
+    await c.env.DB.prepare(RESET_FOR_REGRADE + "WHERE status = 'error' AND id IN (" + ids.map(() => '?').join(',') + ')')
+      .bind(c.deps.now(), ...ids).run();
+    for (const id of ids) { await c.env.GRADE_QUEUE.send({ type: 'grade', attemptId: id }); }
+  }
+  return { body: { success: true, queued: ids.length, more: results.length > MAX_REGRADE_PER_CALL } };
 }
 
 // ---------- bulk maintenance (always scoped to ONE exam) ----------

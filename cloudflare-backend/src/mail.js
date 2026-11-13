@@ -16,7 +16,7 @@
  * HTML.
  */
 
-import { levelForGrade } from './grading.js';
+import { feedbackFor, levelForGrade } from './grading.js';
 
 const RELAY_TIMEOUT_MS = 20000;   // Apps Script cold starts take a few seconds
 
@@ -45,7 +45,8 @@ export function buildResultEmail(attempt, examTitle, qids) {
     if (!r) { continue; }
     if (r.type === 'mc') { mc.push(r); continue; }
     const has = overrides[qid] !== undefined && overrides[qid] !== null;
-    open.push({ ...r, score: has ? Number(overrides[qid]) : r.score });
+    // feedbackFor: a question still waiting for the teacher says so instead of showing empty feedback.
+    open.push({ ...r, score: has ? Number(overrides[qid]) : r.score, feedback: feedbackFor(r, overrides[qid]) });
   }
 
   let html = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#0F172A;">' +

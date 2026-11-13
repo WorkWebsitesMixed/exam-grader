@@ -9,13 +9,16 @@
  * message can be lost or processed twice):
  *   - The attempt row in D1 is the source of truth: `status` says what is
  *     left to do. A message is just a nudge.
- *   - Grading is idempotent: an attempt that is already `graded` is skipped.
+ *   - Grading is idempotent: an attempt that is already `graded` is skipped,
+ *     and a second message for one being graded right now is skipped too.
  *   - The sweep re-enqueues anything stuck, so a lost message heals itself.
+ *   - Tries are counted (MAX_GRADE_ATTEMPTS) and partial results are kept, so
+ *     a failing attempt cannot spend tokens without limit.
  * D1's free plan allows 50 queries per invocation, hence the small LIMITs.
  */
 
 import { makeAskModel } from './claude.js';
-import { GradingError, DEFAULT_BOUNDARIES, calculateGrade, computeTotals, gradeQuestion } from './grading.js';
+import { GradingError, DEFAULT_BOUNDARIES, calculateGrade, computeTotals, countNeedsReview, gradeQuestion } from './grading.js';
 import { assessEvents, parseEvents, withLegacySwitches } from './integrity.js';
 import { buildSimilarityReport } from './similarity.js';
 import { sendAttemptEmail } from './mail.js';
@@ -23,8 +26,21 @@ import { processJob } from './jobs.js';
 
 const SWEEP_LIMIT = 10;                 // rows per category per run (query budget)
 const SUBMIT_GRACE_MS = 60 * 1000;      // after the deadline before auto-submitting
-const STUCK_GRADING_MS = 10 * 60 * 1000;
-const STUCK_SUBMITTED_MS = 2 * 60 * 1000;
+// A grading run is "stale" only after longer than a queue consumer may run
+// (15 min wall time), so a run that is still alive is never taken over.
+const STUCK_GRADING_MS = 16 * 60 * 1000;
+// Well above the normal queue wait when a whole class submits at the hard stop
+// (about 70 attempts, 5 at a time). A shorter value re-enqueued attempts that
+// were simply waiting their turn, one duplicate message a minute.
+const STUCK_SUBMITTED_MS = 30 * 60 * 1000;
+// Grading tries per attempt before it stops as `error`. Without a cap, one
+// attempt that always fails would call the model again every few minutes forever.
+export const MAX_GRADE_ATTEMPTS = 5;
+// Partial results are saved after this many model-graded questions, so a retry
+// continues where the last run stopped instead of paying for every call again.
+// Not after every question: each save is a D1 query, and an invocation is
+// limited to 50 subrequests (model calls + queries).
+const CHECKPOINT_EVERY = 5;
 const STUCK_JOB_MS = 20 * 60 * 1000;
 const EMAIL_PER_SWEEP = 8;             // results emails sent per run (sent in parallel)
 
@@ -38,13 +54,36 @@ export function boundariesOf(exam) {
 /**
  * Grades one attempt and writes the result. Returns 'graded', 'skipped' or
  * 'error'. Throws only for RETRYABLE failures, so the queue can retry later.
+ *
+ * Life of an attempt here (status column):
+ *   submitted --claim--> grading --all questions done--> graded
+ *                           |--service failure that may pass--> submitted (try again later)
+ *                           |--permanent failure, or 5 tries used--> error (teacher presses Regrade)
+ *
+ * The claim is one compare-and-set UPDATE. Queue messages can arrive twice
+ * (and the sweep sends duplicates), so two consumers may reach the same
+ * attempt; only the one whose UPDATE changes the row goes on, which is what
+ * stops an attempt from being graded, and paid for, twice at once.
  */
 export async function processGrade(env, deps, attemptId) {
+  const now = deps.now();
   const attempt = await env.DB.prepare('SELECT * FROM attempts WHERE id = ?').bind(attemptId).first();
-  if (!attempt || !['submitted', 'grading', 'error'].includes(attempt.status)) { return 'skipped'; }
+  if (!attempt || !['submitted', 'grading'].includes(attempt.status)) { return 'skipped'; }
 
-  await env.DB.prepare("UPDATE attempts SET status = 'grading' WHERE id = ? AND status IN ('submitted','grading','error')")
-    .bind(attemptId).run();
+  // Retry cap: stop here, keeping the last recorded problem as the explanation.
+  if (attempt.grade_attempts >= MAX_GRADE_ATTEMPTS) {
+    await env.DB.prepare("UPDATE attempts SET status = 'error', grading_error = ? WHERE id = ? AND status IN ('submitted','grading')")
+      .bind(('Stopped after ' + MAX_GRADE_ATTEMPTS + ' tries. Last problem: ' + (attempt.grading_error || 'unknown')).slice(0, 500),
+            attemptId).run();
+    return 'error';
+  }
+
+  // Claim: from `submitted`, or from a `grading` run that started so long ago it must be dead.
+  const claim = await env.DB.prepare(
+    "UPDATE attempts SET status = 'grading', grading_started_at = ?, grade_attempts = grade_attempts + 1 " +
+    "WHERE id = ? AND (status = 'submitted' OR (status = 'grading' AND (grading_started_at IS NULL OR grading_started_at < ?)))")
+    .bind(now, attemptId, now - STUCK_GRADING_MS).run();
+  if (!claim.meta.changes) { return 'skipped'; }   // another consumer is grading it right now
 
   const exam = await env.DB.prepare('SELECT * FROM exams WHERE id = ?').bind(attempt.exam_id).first();
   const paper = JSON.parse(attempt.paper);
@@ -54,18 +93,45 @@ export async function processGrade(env, deps, attemptId) {
   const byQid = new Map(rows.map((q) => [q.qid, q]));
   const paperQuestions = paper.qids.map((qid) => byQid.get(qid)).filter(Boolean);
 
-  const askModel = makeAskModel(env, deps);
-  const results = {};
+  // Tokens used by THIS run and not yet written to the row.
+  const spent = { in: 0, out: 0 };
+  const askModel = makeAskModel(env, deps, (u) => { spent.in += u.input_tokens || 0; spent.out += u.output_tokens || 0; });
+  // Start from what an earlier, interrupted run already graded (NULL on a first run and after "Regrade").
+  const results = JSON.parse(attempt.results || '{}');
+
+  /** Saves the partial results and adds the tokens spent since the last save. */
+  const checkpoint = async (extraSql, extraBinds) => {
+    await env.DB.prepare('UPDATE attempts SET results = ?, tokens_in = tokens_in + ?, tokens_out = tokens_out + ?' +
+                         (extraSql || '') + " WHERE id = ? AND status = 'grading'")
+      .bind(JSON.stringify(results), spent.in, spent.out, ...(extraBinds || []), attemptId).run();
+    spent.in = 0; spent.out = 0;
+  };
+
   try {
     // Sequential on purpose: keeps us well under the model's per-minute limits.
-    for (const q of paperQuestions) { results[q.qid] = await gradeQuestion(q, answers[q.qid], askModel); }
-  } catch (e) {
-    if (e instanceof GradingError && !e.retryable) {
-      await env.DB.prepare("UPDATE attempts SET status = 'error', grading_error = ? WHERE id = ?")
-        .bind(e.message, attemptId).run();
-      return 'error';
+    let sinceSave = 0;
+    for (const q of paperQuestions) {
+      // Multiple choice costs nothing, so it is always re-marked; a written
+      // answer that already has a result from an earlier run is not paid for again.
+      if (q.type !== 'mc' && results[q.qid]) { continue; }
+      results[q.qid] = await gradeQuestion(q, answers[q.qid], askModel);
+      if (q.type !== 'mc' && ++sinceSave >= CHECKPOINT_EVERY) { await checkpoint(); sinceSave = 0; }
     }
-    throw e;  // retryable: the consumer asks the queue to try again
+  } catch (e) {
+    const permanent = e instanceof GradingError && !e.retryable;
+    const message = String((e && e.message) || e).slice(0, 500);
+    try {
+      // Keep what was graded, and release the claim so the next try does not
+      // have to wait for the run to look stale. Permanent failures (bad key,
+      // no credit) stop as `error`; anything else goes back to `submitted`.
+      await checkpoint(', status = ?, grading_error = ?', [permanent ? 'error' : 'submitted', message]);
+    } catch (saveError) {
+      // The save itself failed (for example the subrequest limit was reached).
+      // The row stays `grading` and the sweep takes it over once it is stale.
+      console.error('could not record a grading failure', attemptId, saveError && saveError.message);
+    }
+    if (permanent) { return 'error'; }
+    throw e;  // the consumer asks the queue to try again
   }
 
   const overrides = JSON.parse(attempt.overrides || '{}');
@@ -76,14 +142,18 @@ export async function processGrade(env, deps, attemptId) {
   const penalty = assessEvents(events).penalty;
   const totals = computeTotals(paperQuestions, results, overrides, penalty);
   const finalGrade = calculateGrade(totals.percentage, attempt.set_id, boundariesOf(exam));
-  const emailStatus = env.MAIL_RELAY_URL ? 'pending' : 'none';
+  // A regraded attempt whose email already went out is not emailed again by
+  // itself; the teacher decides with "Resend emails".
+  const emailStatus = !env.MAIL_RELAY_URL ? 'none' : attempt.email_status === 'sent' ? 'sent' : 'pending';
 
   await env.DB.prepare(
     "UPDATE attempts SET status = 'graded', results = ?, mc_score = ?, open_score = ?, max_score = ?, " +
     'total_score = ?, percentage = ?, final_grade = ?, penalty = ?, graded_at = ?, grading_error = NULL, ' +
-    'email_status = ? WHERE id = ?')
+    'email_status = ?, needs_review = ?, tokens_in = tokens_in + ?, tokens_out = tokens_out + ? ' +
+    "WHERE id = ? AND status = 'grading'")
     .bind(JSON.stringify(results), totals.mcScore, totals.openScore, totals.maxScore, totals.totalScore,
-          totals.percentage, finalGrade, penalty, deps.now(), emailStatus, attemptId).run();
+          totals.percentage, finalGrade, penalty, deps.now(), emailStatus,
+          countNeedsReview(paperQuestions, results, overrides), spent.in, spent.out, attemptId).run();
   return 'graded';
 }
 
@@ -155,7 +225,9 @@ export async function runSweep(env, deps) {
   }
 
   const grading = await env.DB.prepare(
-    "SELECT id FROM attempts WHERE status = 'grading' AND submitted_at < ? LIMIT ?")
+    // Measured from when grading STARTED (not from the submit), so an attempt
+    // that waited long in the queue is not mistaken for a dead run.
+    "SELECT id FROM attempts WHERE status = 'grading' AND (grading_started_at IS NULL OR grading_started_at < ?) LIMIT ?")
     .bind(now - STUCK_GRADING_MS, SWEEP_LIMIT).all();
   for (const row of grading.results) {
     await env.GRADE_QUEUE.send({ type: 'grade', attemptId: row.id });

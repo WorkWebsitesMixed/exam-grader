@@ -8,7 +8,7 @@ _Last updated: 2026-11-12 (session 14 — audit plan written; audit phase P1 "gr
 
 ### Where things stand
 - **`AUDIT_PLAN.md` exists** (repo root, local only, git-ignored on purpose: this repo is public and the file lists open findings). It holds the findings, the multi-teacher design, decisions D1–D11 and phases P0–P7. Read it before any audit work. Do not copy its findings into this file.
-- **Phase P1 (grading reliability and cost visibility) is written and tested but NOT committed, NOT migrated, NOT deployed.** `npm test` in `cloudflare-backend/`: 159 pass (148 before + 11 new). The live Worker is still the version from before this session.
+- **Phase P1 DEPLOYED 2026-11-13** (migration 007 applied, DLQ created, Worker deployed by Andrés; committed and pushed the same day). Live check: a `QUIZ_TEST` attempt graded (`graded`, 1 try, 1374 tokens in / 808 out, both open-ended answers got complete feedback). **Not yet exercised against the real API:** the short-answer path with a WRONG answer (all three short answers in that attempt matched locally, so no model call used `between_tools`), a refusal, and a `max_tokens` retry. Original note: P1 was written and tested but not yet applied. `npm test` in `cloudflare-backend/`: 159 pass (148 before + 11 new). The live Worker is still the version from before this session.
 - **Why it was not deployed today:** an exam was scheduled for 15:00 on 2026-11-12, and the new request to Claude has never been sent to the real API (the tests use a fake model). Andrés decided to deploy on 2026-11-13.
 - Of phase P0 only the `.gitignore` lines are done (`tools/regrade-demo/`, `diagrams/`, `backups/`, `AUDIT_PLAN.md`). The rest of P0 waits on decisions D8 and D9.
 

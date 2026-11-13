@@ -592,3 +592,38 @@ test('attempt detail: the penalty can be removed from the panel and the stored v
   await until(() => /penalty -0/.test(text(page, '#view')), 'detail reloaded');
   page.win.close();
 });
+
+test('grading problems: the list offers "Regrade errors", shows token totals, and the detail marks a question that needs the teacher', async () => {
+  const w = await setup();
+  // One attempt stuck in error (as after a bad API key), and the graded one
+  // gets a question the AI could not grade.
+  const err = await w.call('POST', '/api/start', { body: {
+    idToken: await w.google.token({ email: 'bea.ruiz@marymount.edu.co' }), exam: 'EX1', set: 'A',
+    firstName: 'Bea', lastName: 'Ruiz', class: '10A' } });
+  db(w).prepare("UPDATE attempts SET status = 'error', grading_error = 'API key missing or invalid', answers = ? WHERE id = ?")
+    .run(JSON.stringify({ Q3: 'An answer.' }), err.json.attemptId);
+  const results = JSON.parse(db(w).prepare('SELECT results FROM attempts WHERE id = ?').get(w.attemptId).results);
+  results.Q3 = { ...results.Q3, score: 0, feedback: '', needsReview: true, reviewReason: 'The model declined to grade this answer' };
+  db(w).prepare('UPDATE attempts SET results = ?, needs_review = 1 WHERE id = ?').run(JSON.stringify(results), w.attemptId);
+
+  const page = await signedIn(w);
+  await until(() => $(page, '#regradeErrors'), 'regrade errors button');
+  assert.match(text(page, '#attemptsTable'), /1 to review/);
+  assert.match(text(page, '#tokenTotals'), /4,200 input and 900 output/);
+
+  // The button sends the error attempt back to grading; the queue then grades it.
+  $(page, '#regradeErrors').click();
+  await until(() => page.requests.some((r) => /\/regrade-errors$/.test(r.url)), 'regrade-errors request');
+  await until(() => w.sent.length === 1, 'attempt enqueued');
+  await w.drainQueue();
+  assert.equal(db(w).prepare('SELECT status FROM attempts WHERE id = ?').get(err.json.attemptId).status, 'graded');
+
+  // Detail of the other attempt: the flagged question says why, and a single regrade is offered.
+  await until(() => $(page, '#attemptsTable tbody tr[data-id="' + w.attemptId + '"]'), 'list reloaded');
+  $(page, '#attemptsTable tbody tr[data-id="' + w.attemptId + '"]').click();
+  await until(() => $(page, '#regradeAttempt'), 'detail');
+  assert.match(text(page, '.needs-review'), /Needs your mark: The model declined/);
+  $(page, '#regradeAttempt').click();
+  await until(() => page.requests.some((r) => r.url.endsWith('/attempts/' + w.attemptId + '/regrade')), 'regrade request');
+  page.win.close();
+});

@@ -50,6 +50,11 @@ queue = "examgrader-grading"
 max_batch_size = 1
 max_concurrency = 5
 max_retries = 5
+# Messages that still fail after max_retries are parked here instead of being
+# dropped, so they can be inspected. Nothing consumes this queue. Create it
+# once before the first deploy that names it:
+#   npx wrangler queues create examgrader-grading-dlq
+dead_letter_queue = "examgrader-grading-dlq"
 
 # Sweep every minute: submit expired attempts, re-enqueue stuck ones.
 [triggers]

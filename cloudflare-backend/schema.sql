@@ -157,6 +157,16 @@ CREATE TABLE IF NOT EXISTS attempts (
   final_grade   TEXT,
   graded_at     INTEGER,
   grading_error TEXT,
+  -- Grading bookkeeping (queue.js). grade_attempts caps the retries;
+  -- grading_started_at is when the current run claimed the row (used to tell a
+  -- live run from a dead one); tokens_* add up what the model calls cost;
+  -- needs_review counts questions the model could not grade and the teacher
+  -- has not marked yet.
+  grade_attempts     INTEGER NOT NULL DEFAULT 0,
+  grading_started_at INTEGER,
+  tokens_in          INTEGER NOT NULL DEFAULT 0,
+  tokens_out         INTEGER NOT NULL DEFAULT 0,
+  needs_review       INTEGER NOT NULL DEFAULT 0,
   email_status  TEXT NOT NULL DEFAULT 'none'
                 CHECK (email_status IN ('none','pending','sent','failed')),
   -- Integrity log (src/integrity.js). `events` is the evidence the browser

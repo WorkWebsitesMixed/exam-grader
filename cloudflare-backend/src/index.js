@@ -58,6 +58,8 @@ const ROUTES = [
   { method: 'PUT',  path: '/api/admin/attempts/:id/penalty',   handler: admin.setPenalty, admin: true, body: true },
   { method: 'DELETE', path: '/api/admin/attempts/:id',         handler: admin.deleteAttempt, admin: true },
   { method: 'POST', path: '/api/admin/attempts/:id/reset',     handler: admin.deleteAttempt, admin: true },
+  { method: 'POST', path: '/api/admin/attempts/:id/regrade',   handler: admin.regradeAttempt, admin: true },
+  { method: 'POST', path: '/api/admin/exams/:id/regrade-errors', handler: admin.regradeErrors, admin: true },
   { method: 'POST', path: '/api/admin/exams/:id/recalculate',  handler: admin.recalculate, admin: true, body: true },
   { method: 'POST', path: '/api/admin/exams/:id/regrade-mc',   handler: admin.regradeMc, admin: true, body: true },
   { method: 'POST', path: '/api/admin/exams/:id/resend-emails', handler: admin.resendEmails, admin: true, body: true },
